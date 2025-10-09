@@ -40,4 +40,4 @@ $plugin->supported = [401, 501];
 $plugin->maturity = MATURITY_STABLE;
 
 // Human-readable version information.
-$plugin->release = '2.0.0';
+$plugin->release = '2.0.1';
