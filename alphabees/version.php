@@ -34,7 +34,7 @@ $plugin->version = 2025072521;
 $plugin->requires = 2022112800;
 
 // List of supported Moodle versions.
-$plugin->supported = [401, 500];
+$plugin->supported = [401, 501];
 
 // Maturity level of the plugin: MATURITY_ALPHA, MATURITY_BETA, MATURITY_RC, or MATURITY_STABLE.
 $plugin->maturity = MATURITY_STABLE;

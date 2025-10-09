@@ -101,12 +101,16 @@ class block_alphabees extends block_base {
         // First initialize $this->content.
         $this->content = new stdClass();
 
-        // Then assign the invisible output.
-        $this->content->text = html_writer::div(
-            "&#65279;",
-            'block_alphabees_stub',
-            ['style' => 'display:none']
-        );
+        // Content title and usage instructions.
+        $title = get_string('usagetitle', 'block_alphabees');
+        $text  = get_string('usagetext', 'block_alphabees');
+
+        $this->content->text = '
+            <details class="ab-accordion">
+                <summary><strong>' . $title . '</strong></summary>
+                <div class="ab-accordion-body">' . $text . '</div>
+            </details>
+        ';
 
         // Ensure the user is logged in.
         require_login();

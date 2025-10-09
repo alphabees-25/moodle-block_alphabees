@@ -42,3 +42,5 @@ $string['nobotselected'] = 'Es wurde kein KI-Tutor ausgewählt.';
 $string['pluginname'] = 'Alphabees KI Tutor';
 $string['privacy:metadata'] = 'Der Alphabees-Block speichert keine persönlichen Daten, kommuniziert jedoch mit dem Alphabees-Backend.';
 $string['selectabot'] = 'Wählen Sie einen KI-Tutor aus';
+$string['usagetext'] = '<p>Dem KI-Tutor kannst du jederzeit Fragen stellen.</p><p><strong>So funktioniert es:</strong></p><ul><li>Unten rechts auf das Chat-Symbol klicken, um den Tutor zu öffnen.</li><li>In der Eingabeleiste Text tippen oder das Mikrofon-Symbol für eine Spracheingabe verwenden.</li><li>Danach einfach auf die Antwort warten – je nach Komplexität kann dies einen Moment dauern.</li></ul><p><em>Hinweis:</em> Der Tutor ist KI-basiert und wird von der Administration deiner Moodle-Seite verwaltet. Bei Fragen zur Nutzung wende dich bitte an die Kurs- oder Systemadministration.</p>';
+$string['usagetitle'] = 'Nutzungshinweise KI-Tutor';

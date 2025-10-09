@@ -42,3 +42,5 @@ $string['nobotselected'] = 'No AI tutor has been selected.';
 $string['pluginname'] = 'Alphabees AI Tutor';
 $string['privacy:metadata'] = 'The Alphabees block does not store personal data but interacts with the Alphabees backend.';
 $string['selectabot'] = 'Select an AI tutor';
+$string['usagetext'] = '<p>You can ask the AI Tutor questions at any time.</p><p><strong>How it works:</strong></p><ul><li>Click the chat icon in the bottom-right corner to open the tutor.</li><li>Type your question in the input bar or use the microphone icon for voice input.</li><li>Then wait for the reply — depending on complexity this may take a moment.</li></ul><p><em>Note:</em> The tutor is AI-based and administered by your Moodle site administrators. For questions about usage, please contact your course or system administration.</p>';
+$string['usagetitle'] = 'How to use the AI Tutor';
