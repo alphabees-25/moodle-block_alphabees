@@ -28,7 +28,7 @@ defined('MOODLE_INTERNAL') || die();
 $plugin->component = 'block_alphabees';
 
 // The plugin version in YYYYMMDDXX format.
-$plugin->version = 2025072521;
+$plugin->version = 2025100901;
 
 // Minimum Moodle version required for this plugin.
 $plugin->requires = 2022112800;
