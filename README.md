@@ -170,10 +170,24 @@ As part of our business model, the chat widget generates revenue to finance ongo
 
 ---
 
-## Support  
+## Changelog
 
-For issues, please:  
-- Report them via [GitHub Issues](https://github.com/LErdweg/moodle-block_alphabees/issues).  
+For a full history of changes, see [CHANGELOG.md](./CHANGELOG.md).
+
+| Version | Date | Highlights |
+|---------|------|------------|
+| [2.0.3](./CHANGELOG.md#203---2025-10-14) | 2025-10-14 | AMD build bug fix |
+| [2.0.1](./CHANGELOG.md#201---2025-10-09) | 2025-10-09 | Moodle 5.1 support |
+| [2.0.0](./CHANGELOG.md#200---2025-09-03) | 2025-09-03 | Mobile app support, Moodle 5 compliance |
+| [1.0.1](./CHANGELOG.md#101---2025-01-28) | 2025-01-28 | Widget update, Moodle flag fixes |
+| [1.0.0](./CHANGELOG.md#100---2024-12-11) | 2024-12-11 | Initial release |
+
+---
+
+## Support
+
+For issues, please:
+- Report them via [GitHub Issues](https://github.com/LErdweg/moodle-block_alphabees/issues).
 - Contact support at [support@alphabees.de](mailto:support@alphabees.de).  
 
 
