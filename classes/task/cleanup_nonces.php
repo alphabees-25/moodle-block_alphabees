@@ -15,31 +15,36 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Version details for the Alphabees AI Tutor block plugin.
+ * Scheduled task. Purges expired replay-protection nonces.
  *
  * @package   block_alphabees
- * @copyright 2025 Alphabees
+ * @copyright 2026 Alphabees
  * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
-defined('MOODLE_INTERNAL') || die();
+namespace block_alphabees\task;
 
-// The plugin's frankenstyle component name.
-$plugin->component = 'block_alphabees';
+/**
+ * Scheduled task that removes expired nonces from block_alphabees_nonces.
+ */
+class cleanup_nonces extends \core\task\scheduled_task {
 
-// The plugin version in YYYYMMDDXX format.
-$plugin->version = 2026051001;
+    /**
+     * Return the human-readable name for the task list UI.
+     *
+     * @return string
+     */
+    public function get_name(): string {
+        return get_string('task_cleanup_nonces', 'block_alphabees');
+    }
 
-// Minimum Moodle version required for this plugin.
-$plugin->requires = 2022112800;
-
-// List of supported Moodle versions.
-// Range: 4.1 LTS (lowest) through 5.2 (latest as of release).
-$plugin->supported = [401, 502];
-
-// Maturity level of the plugin: MATURITY_ALPHA, MATURITY_BETA, MATURITY_RC, or MATURITY_STABLE.
-$plugin->maturity = MATURITY_STABLE;
-
-// Human-readable version information for version.
-$plugin->release = '3.0.0';
-
+    /**
+     * Delete all nonce rows whose expiry is in the past.
+     *
+     * @return void
+     */
+    public function execute(): void {
+        global $DB;
+        $DB->delete_records_select('block_alphabees_nonces', 'expiresat < ?', [time()]);
+    }
+}

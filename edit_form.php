@@ -34,67 +34,101 @@ require_once($CFG->dirroot . '/blocks/edit_form.php');
 class block_alphabees_edit_form extends block_edit_form {
 
     /**
-     * Define specific elements for the edit form.
+     * Define the form fields specific to the Alphabees block instance.
      *
-     * @param \MoodleQuickForm $mform The form being defined.
+     * @param MoodleQuickForm $mform
      * @return void
-     * @throws coding_exception
      */
     protected function specific_definition($mform): void {
         debugging('[block_alphabees] Loading block instance edit form.', DEBUG_DEVELOPER);
 
-        // Add a header for instance settings.
         $mform->addElement('header', 'config_header', get_string('blocksettings', 'block_alphabees'));
 
-        // Dropdown for selecting a bot.
+        $remotemanaged = !empty($this->block->config->remote_managed);
+        $placementuuid = isset($this->block->config->placement_uuid)
+            ? (string)$this->block->config->placement_uuid : '';
+
+        if ($remotemanaged) {
+            $banner = '<div class="alert alert-info" style="margin-bottom:1em;">'
+                . get_string('remotemanaged_banner', 'block_alphabees') . '</div>';
+            $mform->addElement('html', $banner);
+        }
+
         $botoptions = $this->get_bot_options();
-        $mform->addElement('select', 'config_botid', get_string('botid', 'block_alphabees'), $botoptions);
+        $mform->addElement(
+            'select',
+            'config_botid',
+            get_string('botid', 'block_alphabees'),
+            $botoptions
+        );
         $mform->setType('config_botid', PARAM_TEXT);
+
+        // The override checkbox lets an admin take local control even when
+        // the placement was last set by the portal.
+        if ($remotemanaged) {
+            $mform->addElement(
+                'advcheckbox',
+                'config_override_remote',
+                get_string('overrideremote', 'block_alphabees'),
+                get_string('overrideremote_help', 'block_alphabees')
+            );
+            $mform->setType('config_override_remote', PARAM_BOOL);
+        }
+
+        if ($placementuuid !== '') {
+            $mform->addElement(
+                'static',
+                'config_placement_uuid_display',
+                get_string('placementuuid', 'block_alphabees'),
+                '<code>' . s($placementuuid) . '</code>'
+            );
+        }
     }
 
     /**
-     * Retrieve options for bots from the external API.
+     * Hook called after data is read from the form. We use it to flip the
+     * remote_managed flag back to false when the admin checked "override".
+     */
+    public function set_data($defaults) {
+        if (!empty($this->block->config->remote_managed)) {
+            // Default the override checkbox to unchecked so saving without
+            // ticking it doesn't accidentally take local control.
+            $defaults->config_override_remote = 0;
+        }
+        return parent::set_data($defaults);
+    }
+
+    /**
+     * Retrieve bot options from the Alphabees backend.
      *
-     * @return array<string, string> An associative array of bot options with bot IDs as keys.
-     * @throws moodle_exception
+     * @return array<string, string>
      */
     private function get_bot_options(): array {
         $apikey = get_config('block_alphabees', 'apikey');
         if (empty($apikey)) {
-            debugging('[block_alphabees] API Key is missing.', DEBUG_DEVELOPER);
             return ['' => get_string('apikeymissing', 'block_alphabees')];
         }
 
-        // Sanitize API key.
         $apikey = clean_param($apikey, PARAM_TEXT);
-
-        $url = 'https://api.alphabees.de/al/tutors/tutor/moodle-list/' . urlencode($apikey);
-
-        debugging('[block_alphabees] Fetching bots from API: ' . $url, DEBUG_DEVELOPER);
+        $url = 'https://api.alphalearn.ai/al/tutors/tutor/moodle-list/' . urlencode($apikey);
 
         $curl = new curl(['timeout' => 10]);
         $response = $curl->get($url);
-
         if (!$response) {
-            debugging('[block_alphabees] Failed to fetch bots. API response was empty.', DEBUG_DEVELOPER);
             return ['' => get_string('nobotsavailable', 'block_alphabees')];
         }
 
-        // Decode the response safely.
         $responsedata = json_decode($response, true);
         if (json_last_error() !== JSON_ERROR_NONE) {
-            debugging('[block_alphabees] Failed to decode JSON response.', DEBUG_DEVELOPER);
             return ['' => get_string('nobotsavailable', 'block_alphabees')];
         }
 
-        // Prepare bot options.
         $options = ['' => get_string('selectabot', 'block_alphabees')];
         foreach ($responsedata['data'] ?? [] as $bot) {
             if (isset($bot['id'], $bot['name'])) {
                 $options[clean_param($bot['id'], PARAM_TEXT)] = clean_param($bot['name'], PARAM_TEXT);
             }
         }
-
         return $options;
     }
 }

@@ -10,7 +10,7 @@ This plugin leverages Moodle's flexible block placement capabilities while incor
 ## How It Works: Alphabees AI Tutor Integration  
 
 ### **Step 1: Register on the Alphabees Portal**  
-Start by registering at [portal.alphabees.de](https://portal.alphabees.de), where you can:  
+Start by registering at [portal.alphalearn.ai](https://portal.alphalearn.ai), where you can:  
 - Upload files and connect external data sources (e.g., websites) to build a custom knowledge base.  
 - Design chat widget styles with customizable options, including:  
   - Logo and placeholder messages.  
@@ -80,29 +80,29 @@ For more detailed instructions, visit the [Installation Wiki](https://github.com
 ---
 
 ## Configuration
-0. Register a free or paid Account on portal.alphabees.de and retrieve your API key
-![Retrieve API-KEY](assets_github/retrieve_api-key_000.png.png)
+0. Register a free or paid Account on portal.alphalearn.ai and retrieve your API key
+![Retrieve API-KEY](assets/retrieve_api-key_000.png.png)
 
 1. Enter your API key from the Alphabees portal in the plugin settings.  
-![Enter API-KEY](assets_github/enter_apikey_001.png)
+![Enter API-KEY](assets/enter_apikey_001.png)
 
 2. Customize the chat widget appearance through the Alphabees portal, including colors, fonts, logos, and placement.
-![Show Chat Widget](assets_github/open_chat_widget_005.png)
+![Show Chat Widget](assets/open_chat_widget_005.png)
 
 3. Add the Alphabees block to specific courses or pages in Moodle.  
-![Add Block Alphabees AI Tutor](assets_github/add_block_Alphabees.png)
+![Add Block Alphabees AI Tutor](assets/add_block_Alphabees.png)
 
 4. Use the block settings to select the desired AI tutor from the dropdown list.  
-![Configure Block Instance](assets_github/configure_block_instance_003.png)
+![Configure Block Instance](assets/configure_block_instance_003.png)
 
-![Select AI Tutor from dropdown](assets_github/select_ai_tutor_004.png)
+![Select AI Tutor from dropdown](assets/select_ai_tutor_004.png)
 
 ## Customizations
 1. Change size of chat window.
-![Edit Window Size](assets_github/edit_window_size_006.png)
+![Edit Window Size](assets/edit_window_size_006.png)
 
 2. Change position of chat window.
-![Edit Window Size](assets_github/move_chat_window_007.png)
+![Edit Window Size](assets/move_chat_window_007.png)
 
 ---
 
@@ -117,18 +117,16 @@ For more detailed instructions, visit the [Installation Wiki](https://github.com
 - Cost: €0 (Free Forever)**
 
 ### 2. Basic Plan (€99/month)
-- 20 AI Tutors**
+- 5 AI Tutors**
 - 2,000 conversations per month**
-- 100 data sources**
-- up to 100 learners
+- 50 data sources**
 - Custom chat design with branding**
 - Email support**
 
 ### 3. Professional Plan (€249/month)
-- 50 AI Tutors**
+- 20 AI Tutors**
 - 5,000 conversations per month**
-- 1,000 data sources**
-- up to 250 learners
+- 50 data sources**
 - Custom chat design without branding**
 - Email support**
 

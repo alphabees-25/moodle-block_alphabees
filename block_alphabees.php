@@ -22,6 +22,11 @@
  * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
+use block_alphabees\local\backend_client;
+use block_alphabees\local\crypto;
+use block_alphabees\local\placement_repository;
+use block_alphabees\local\site_registry;
+
 /**
  * Class block_alphabees
  *
@@ -37,6 +42,118 @@ class block_alphabees extends block_base {
      */
     public function init(): void {
         $this->title = get_string('pluginname', 'block_alphabees');
+    }
+
+    /**
+     * Called once when a new instance of this block is created.
+     *
+     * Generates a stable placement_uuid into instance config and notifies the
+     * Alphabees backend that a new placement now exists.
+     */
+    public function instance_create(): bool {
+        $this->ensure_placement_uuid();
+        $this->emit_placement_event('placement.created');
+        return true;
+    }
+
+    /**
+     * Ensures the in-memory + persisted instance config has a placement_uuid,
+     * writing directly to the DB so we don't recursively trigger events.
+     */
+    private function ensure_placement_uuid(): void {
+        global $DB;
+
+        if (empty($this->instance) || empty($this->instance->id)) {
+            return;
+        }
+        $config = is_object($this->config) ? $this->config : new stdClass();
+        if (!empty($config->placement_uuid)) {
+            return;
+        }
+        $config->placement_uuid = crypto::uuid_v4();
+        $DB->set_field(
+            'block_instances',
+            'configdata',
+            placement_repository::encode_config($config),
+            ['id' => $this->instance->id]
+        );
+        $this->config = $config;
+        if (is_object($this->instance)) {
+            $this->instance->configdata = placement_repository::encode_config($config);
+        }
+    }
+
+    /**
+     * Called when the per-instance configuration is saved (incl. block move).
+     *
+     * @param object $data
+     * @param bool $nolongerused
+     * @return bool
+     */
+    public function instance_config_save($data, $nolongerused = false) {
+        // If admin explicitly took back local control, drop the remote_managed
+        // flag so the form unlocks on next render. The override checkbox itself
+        // is a UI-only toggle and is never persisted.
+        if (is_object($data)) {
+            if (!empty($data->override_remote)) {
+                $data->remote_managed = 0;
+            }
+            unset($data->override_remote);
+        }
+
+        $result = parent::instance_config_save($data, $nolongerused);
+        $this->emit_placement_event('placement.updated');
+        return $result;
+    }
+
+    /**
+     * Called when the block instance is removed from a page.
+     *
+     * @return bool
+     */
+    public function instance_delete(): bool {
+        $this->emit_placement_event('placement.deleted');
+        return parent::instance_delete();
+    }
+
+    /**
+     * Posts a lifecycle event for this placement to the backend.
+     *
+     * Uses the retry queue on transient failure so events are eventually
+     * delivered even if the backend is briefly unavailable.
+     */
+    private function emit_placement_event(string $event): void {
+        if (!site_registry::is_registered()) {
+            return;
+        }
+        if (empty($this->instance) || empty($this->instance->id)) {
+            return;
+        }
+
+        global $DB, $USER;
+        // Re-fetch the instance so we see the just-persisted config.
+        $instance = $DB->get_record('block_instances', ['id' => $this->instance->id]);
+        if (!$instance) {
+            return;
+        }
+
+        $payload = placement_repository::build_payload($instance);
+        $payload['event'] = $event;
+        $payload['actor_user_id'] = !empty($USER->id) ? (int)$USER->id : null;
+        $payload['occurred_at'] = gmdate('Y-m-d\TH:i:s\Z');
+
+        // Queue rather than POST inline. Lifecycle hooks (instance_create/
+        // config_save/delete) run during regular Moodle page rendering;
+        // synchronous cURL + diagnostic output here breaks the redirect
+        // flow with a "Continue" intermediate page and triggers
+        // "mutated session after it was closed" warnings. Cron picks the
+        // task up on the next tick (~1 min) and delivers asynchronously.
+        $task = new \block_alphabees\task\post_placement_event();
+        $task->set_custom_data([
+            'path' => site_registry::path_placements(),
+            'payload' => $payload,
+        ]);
+        \core\task\manager::queue_adhoc_task($task);
     }
 
     /**
@@ -101,12 +218,26 @@ class block_alphabees extends block_base {
         // First initialize $this->content.
         $this->content = new stdClass();
 
-        // Then assign the invisible output.
-        $this->content->text = html_writer::div(
-            "&#65279;",
-            'block_alphabees_stub',
-            ['style' => 'display:none']
-        );
+        // Honor remote-managed visibility flag. When the portal disables a
+        // placement (visible=false), the block stays in block_instances so
+        // re-enabling is a single param flip — but renders empty content
+        // here. Moodle's block_base::is_empty() reads from $content->text,
+        // so an empty string makes the theme hide the block frame entirely.
+        if (isset($this->config->placement_visible) && !$this->config->placement_visible) {
+            $this->content->text = '';
+            return $this->content;
+        }
+
+        // Content title and usage instructions.
+        $title = get_string('usagetitle', 'block_alphabees');
+        $text  = get_string('usagetext', 'block_alphabees');
+
+        $this->content->text = '
+            <details class="ab-accordion">
+                <summary><strong>' . $title . '</strong></summary>
+                <div class="ab-accordion-body">' . $text . '</div>
+            </details>
+        ';
 
         // Ensure the user is logged in.
         require_login();
@@ -127,7 +258,12 @@ class block_alphabees extends block_base {
             return $this->content;
         }
 
-        $primarycolor = $this->fetch_primary_color($apikey, $botid);
+        // Primary color: prefer the per-placement override (set via portal
+        // update_placement → primary_color), otherwise auto-fetch from the
+        // bot's catalog entry as before.
+        $colorov = isset($this->config->primary_color_override)
+            ? clean_param((string)$this->config->primary_color_override, PARAM_TEXT) : '';
+        $primarycolor = $colorov !== '' ? $colorov : $this->fetch_primary_color($apikey, $botid);
         // Build extra context for downstream processing.
         global $USER, $COURSE, $CFG, $DB;
 
@@ -158,11 +294,23 @@ class block_alphabees extends block_base {
         }
 
         $userid = (int)$USER->id;
+
+        // Make sure this placement has a stable UUID. Older instances created
+        // before the upgrade won't have one yet — generate it lazily here so
+        // the backend can correlate sessions to a placement immediately,
+        // before the next config save fires the create event.
+        $this->ensure_placement_uuid();
+        $placementuuid = isset($this->config->placement_uuid)
+            ? clean_param($this->config->placement_uuid, PARAM_TEXT)
+            : '';
+
         $extracontext = [
-            'courseid'   => $courseid,
-            'sectionnum' => $sectionnum,
-            'sectionid'  => $sectionid,
-            'userid'     => $userid,
+            'courseid'       => $courseid,
+            'sectionnum'     => $sectionnum,
+            'sectionid'      => $sectionid,
+            'userid'         => $userid,
+            'placementuuid'  => $placementuuid,
+            'siteidentifier' => \block_alphabees\local\site_registry::site_identifier(),
         ];
 
         // Use Moodle's AMD module to load the chat widget.
@@ -193,7 +341,7 @@ class block_alphabees extends block_base {
         $apikey = clean_param($apikey, PARAM_TEXT);
         $botid = clean_param($botid, PARAM_TEXT);
 
-        $url = 'https://api.alphabees.de/al/tutors/tutor/moodle-list/' . urlencode($apikey);
+        $url = 'https://api.alphalearn.ai/al/tutors/tutor/moodle-list/' . urlencode($apikey);
 
         $curl = new curl(['timeout' => 10]);
         $response = $curl->get($url);
