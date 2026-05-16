@@ -44,4 +44,15 @@ $capabilities = [
         ],
         'clonepermissionsfrom' => 'moodle/my:manageblocks',
     ],
+
+    // Granted to the dedicated Alphabees service user created by the
+    // auto-setup flow. The user's web-services token uses this to access
+    // the granted core_course_* / mod_page_* functions. Risk bitmask flags
+    // it because the included push functions can mutate course content.
+    'block/alphabees:usewebservice' => [
+        'riskbitmask' => RISK_DATALOSS | RISK_PERSONAL,
+        'captype' => 'read',
+        'contextlevel' => CONTEXT_SYSTEM,
+        'archetypes' => [],
+    ],
 ];

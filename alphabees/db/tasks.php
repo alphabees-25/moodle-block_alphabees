@@ -15,30 +15,41 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Version details for the Alphabees AI Tutor block plugin.
+ * Scheduled tasks for block_alphabees.
  *
  * @package   block_alphabees
- * @copyright 2025 Alphabees
+ * @copyright 2026 Alphabees
  * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
 defined('MOODLE_INTERNAL') || die();
 
-// The plugin's frankenstyle component name.
-$plugin->component = 'block_alphabees';
-
-// The plugin version in YYYYMMDDXX format.
-$plugin->version = 2026051001;
-
-// Minimum Moodle version required for this plugin.
-$plugin->requires = 2022112800;
-
-// List of supported Moodle versions.
-// Range: 4.1 LTS (lowest) through 5.2 (latest as of release).
-$plugin->supported = [401, 502];
-
-// Maturity level of the plugin: MATURITY_ALPHA, MATURITY_BETA, MATURITY_RC, or MATURITY_STABLE.
-$plugin->maturity = MATURITY_STABLE;
-
-// Human-readable version information for version.
-$plugin->release = '3.0.0';
+$tasks = [
+    [
+        'classname' => 'block_alphabees\task\sync_placements',
+        'blocking' => 0,
+        'minute' => 'R',
+        'hour' => '*',
+        'day' => '*',
+        'dayofweek' => '*',
+        'month' => '*',
+    ],
+    [
+        'classname' => 'block_alphabees\task\cleanup_nonces',
+        'blocking' => 0,
+        'minute' => '*/15',
+        'hour' => '*',
+        'day' => '*',
+        'dayofweek' => '*',
+        'month' => '*',
+    ],
+    [
+        'classname' => 'block_alphabees\task\process_retry_queue',
+        'blocking' => 0,
+        'minute' => '*/5',
+        'hour' => '*',
+        'day' => '*',
+        'dayofweek' => '*',
+        'month' => '*',
+    ],
+];

@@ -29,12 +29,10 @@ define("block_alphabees/config", [], function() {
         var bust = Math.floor(10000 + Math.random() * 90000);
         window.requirejs.config({
             paths: {
-                "al-chat-widget": "https://chat.alphabees.de/production/chat-widget.amd.js?v=" + bust
+                "al-chat-widget": "https://chat.alphalearn.ai/chat-widget.amd.js?v=" + bust
             }
         });
     }
 
     return {};
 });
-
-

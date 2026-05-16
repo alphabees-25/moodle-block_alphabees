@@ -44,22 +44,26 @@ define([
                 return;
             }
             try {
+                const userId = Number((ctx && ctx.userid) || 0) || 0;
                 const context = {
                     courseId: Number((ctx && ctx.courseid) || 0) || 0,
-                    sectionNum: Number((ctx && ctx.sectionnum) || 0) || 0,
                     sectionId: Number((ctx && ctx.sectionid) || 0) || 0,
-                    userId: Number((ctx && ctx.userid) || 0) || 0
+                    sectionNum: Number((ctx && ctx.sectionnum) || 0) || 0
                 };
+                const placementUuid = (ctx && ctx.placementuuid) ? String(ctx.placementuuid) : "";
+                const siteIdentifier = (ctx && ctx.siteidentifier) ? String(ctx.siteidentifier) : "";
 
-                window.console && console.log("[alphabees] Initializing chat widget…", context);
+                window.console && console.log("[alphabees] Initializing chat widget…", { userId, context, placementUuid, siteIdentifier });
 
                 _loadAlChat({
                     apiKey: apiKey,
                     botId: botId,
                     primaryColor: primaryColor,
                     platform: "moodle",
-                    userId: context.userId,
-                    context: context
+                    userId: userId,
+                    context: context,
+                    placementUuid: placementUuid,
+                    siteIdentifier: siteIdentifier
                 });
             } catch (e) {
                 window.console && console.error("[alphabees] Init error:", e);
@@ -67,4 +71,3 @@ define([
         }
     };
 });
-

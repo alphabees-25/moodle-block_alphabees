@@ -25,19 +25,55 @@
 defined('MOODLE_INTERNAL') || die();
 
 if ($ADMIN->fulltree) {
-    // Add a heading for general settings.
+    // Renderer lives in lib.php (auto-loaded once per request) to avoid a
+    // "Cannot redeclare" fatal when Moodle re-includes settings.php.
+    require_once($CFG->dirroot . '/blocks/alphabees/lib.php');
+
+    // Setup section.
+    // All actionable inputs (API key + the two opt-in checkboxes) live at
+    // the top with one-line help texts. Anything diagnostic / verbose is
+    // pushed into the Status panel below so admins can configure quickly
+    // without scrolling past large information blocks.
     $settings->add(new admin_setting_heading(
         'block_alphabees/general_settings',
         get_string('generalsettings', 'block_alphabees'),
         get_string('generalsettings_desc', 'block_alphabees')
     ));
 
-    // Add the API Key setting.
-    $settings->add(new admin_setting_configtext(
-        'block_alphabees/apikey', // The unique identifier for the setting.
-        get_string('apikey', 'block_alphabees'), // The setting's display name.
-        get_string('apikey_desc', 'block_alphabees'), // The description shown below the field.
-        clean_param('', PARAM_TEXT), // Default value sanitized.
-        PARAM_TEXT // Input validation: Text only.
+    $apikeysetting = new admin_setting_configtext(
+        'block_alphabees/apikey',
+        get_string('apikey', 'block_alphabees'),
+        get_string('apikey_desc', 'block_alphabees'),
+        '',
+        PARAM_TEXT
+    );
+    $apikeysetting->set_updatedcallback('block_alphabees_apikey_changed');
+    $settings->add($apikeysetting);
+
+    $settings->add(new admin_setting_configcheckbox(
+        'block_alphabees/allow_remote_placement',
+        get_string('allow_remote_placement', 'block_alphabees'),
+        get_string('allow_remote_placement_short', 'block_alphabees'),
+        0
+    ));
+
+    $wssetting = new admin_setting_configcheckbox(
+        'block_alphabees/ws_enabled',
+        get_string('ws_enable', 'block_alphabees'),
+        get_string('ws_enable_short', 'block_alphabees'),
+        0
+    );
+    $wssetting->set_updatedcallback('block_alphabees_ws_enabled_changed');
+    $settings->add($wssetting);
+
+    // Status and diagnostics section.
+    // Two stacked compact cards (connection / web services) with everything
+    // verbose tucked behind native <details> disclosures. Heading
+    // description hosts the entire panel HTML, so this is one Moodle
+    // setting block instead of four.
+    $settings->add(new admin_setting_heading(
+        'block_alphabees/status',
+        get_string('statusheading', 'block_alphabees'),
+        block_alphabees_render_status_panel()
     ));
 }

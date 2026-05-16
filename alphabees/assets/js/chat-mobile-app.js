@@ -51,7 +51,7 @@
       var s = document.createElement("script");
       s.id = "alphabees-bundle";
       const randomId = Date.now() + "-" + Math.random().toString(36).slice(2);
-      s.src = `https://chat.alphabees.de/production/chat-widget.js?cacheBust=${randomId}`;
+      s.src = `https://chat.alphalearn.ai/chat-widget.js?cacheBust=${randomId}`;
 
       s.onload = function () {
         window._loadAlChat({
