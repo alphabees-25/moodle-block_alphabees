@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.0.1] - 2026-05-18
+
+### Fixed
+- Added an idempotent upgrade step that creates the `block_alphabees_nonces` and `block_alphabees_retryqueue` tables when upgrading from older plugin versions.
+- Prevented `dml_exception` database-read errors on upgraded customer sites where Moodle had not run `db/install.xml` for the V3 tables.
+
+### Changed
+- Bumped plugin version to `2026051800` and release label to `3.0.1`.
+
+---
+
 ## [3.0.0] - 2026-05-10
 
 ### Added

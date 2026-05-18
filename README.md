@@ -5,7 +5,7 @@ The **Alphabees Moodle Plugin** integrates a powerful AI tutor chat widget into 
 
 This plugin leverages Moodle's flexible block placement capabilities while incorporating robust WebSocket-driven communication and advanced customization options, ensuring a high-performance and user-friendly AI tutoring solution.
 
-- **Current stable release:** 3.0.0
+- **Current stable release:** 3.0.1
 - **Supported Moodle versions:** 4.1 LTS through 5.2
 - **Portal:** [portal.alphalearn.ai](https://portal.alphalearn.ai)
 
@@ -160,6 +160,7 @@ For a full history of changes, see [CHANGELOG.md](./CHANGELOG.md).
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| [3.0.1](./CHANGELOG.md#301---2026-05-18) | 2026-05-18 | Upgrade fix for V3 database tables |
 | [3.0.0](./CHANGELOG.md#300---2026-05-10) | 2026-05-10 | Stable release, backend registration, signed sync, web-services integration |
 | [2.0.3](./CHANGELOG.md#203---2025-10-14) | 2025-10-14 | AMD build bug fix |
 | [2.0.1](./CHANGELOG.md#201---2025-10-09) | 2025-10-09 | Moodle 5.1 support |
@@ -174,5 +175,4 @@ For a full history of changes, see [CHANGELOG.md](./CHANGELOG.md).
 For issues, please:
 - Report them via [GitHub Issues](https://github.com/alphabees-25/moodle-block_alphabees/issues).
 - Contact support at [support@alphabees.de](mailto:support@alphabees.de).
-
 
