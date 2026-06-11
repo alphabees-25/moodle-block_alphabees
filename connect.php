@@ -17,10 +17,10 @@
 /**
  * Synchronous "Connect now" trigger.
  *
- * Lets a site admin force a registration attempt instead of waiting for the
- * next Moodle cron tick. Runs `register_site::execute()` inline, captures
- * any error, and bounces back to the plugin settings page so the connection
- * status panel reflects the new state immediately.
+ * Lets a site admin run a registration attempt explicitly. Runs
+ * `register_site::execute()` inline, captures any error, and bounces back to
+ * the plugin settings page so the connection status panel reflects the new
+ * state immediately.
  *
  * @package   block_alphabees
  * @copyright 2026 Alphabees
@@ -34,39 +34,79 @@ require_login();
 require_sesskey();
 require_capability('moodle/site:config', context_system::instance());
 
+// Capture any mtrace/debug output from the synchronous connect flow so Moodle
+// can still perform a clean redirect back to the settings page.
+$outputbufferlevel = ob_get_level();
+ob_start();
+
 $returnurl = new moodle_url('/admin/settings.php', ['section' => 'blocksettingalphabees']);
+
+/**
+ * Redirect after clearing output produced by task-style helpers.
+ *
+ * @param moodle_url $url
+ * @param string $message
+ * @param string $type
+ * @param int $bufferlevel
+ * @return void
+ */
+function block_alphabees_connect_redirect(
+    moodle_url $url,
+    string $message,
+    string $type,
+    int $bufferlevel
+): void {
+    while (ob_get_level() > $bufferlevel) {
+        ob_end_clean();
+    }
+    redirect($url, $message, null, $type);
+}
 
 $apikey = get_config('block_alphabees', 'apikey');
 if (empty($apikey)) {
-    redirect(
+    block_alphabees_connect_redirect(
         $returnurl,
         get_string('connect_apikey_missing', 'block_alphabees'),
-        null,
-        \core\output\notification::NOTIFY_WARNING
+        \core\output\notification::NOTIFY_WARNING,
+        $outputbufferlevel
     );
 }
 
 // Make sure we have a keypair before trying to register.
 \block_alphabees\local\site_registry::ensure_keypair();
+\block_alphabees\local\site_registry::clear_portal_disconnect();
 
-// Buffer mtrace output so it doesn't break the redirect; we'll flush via
-// the notification message instead.
-ob_start();
-$task = new \block_alphabees\task\register_site();
+// Let an explicit admin action retry registration even if an earlier backend
+// response latched the current key as rejected. The register endpoint is the
+// source of truth for whether the key is actually usable now.
+\block_alphabees\local\site_registry::clear_registration_block();
+\block_alphabees\local\site_registry::reset_registration();
+
 $exception = null;
+$task = new \block_alphabees\task\register_site();
 try {
     $task->execute();
 } catch (\Throwable $e) {
     $exception = $e;
 }
-ob_end_clean();
 
 if (\block_alphabees\local\site_registry::is_registered()) {
-    redirect(
+    try {
+        \block_alphabees\local\connection_manager::activate_defaults();
+    } catch (\Throwable $e) {
+        block_alphabees_connect_redirect(
+            $returnurl,
+            get_string('ws_enable_failed', 'block_alphabees', $e->getMessage()),
+            \core\output\notification::NOTIFY_ERROR,
+            $outputbufferlevel
+        );
+    }
+
+    block_alphabees_connect_redirect(
         $returnurl,
         get_string('connect_success', 'block_alphabees'),
-        null,
-        \core\output\notification::NOTIFY_SUCCESS
+        \core\output\notification::NOTIFY_SUCCESS,
+        $outputbufferlevel
     );
 }
 
@@ -77,4 +117,9 @@ $msg = $lasterror !== null
         ? get_string('connect_failed_with_reason', 'block_alphabees', $exception->getMessage())
         : get_string('connect_failed', 'block_alphabees'));
 
-redirect($returnurl, $msg, null, \core\output\notification::NOTIFY_ERROR);
+block_alphabees_connect_redirect(
+    $returnurl,
+    $msg,
+    \core\output\notification::NOTIFY_ERROR,
+    $outputbufferlevel
+);

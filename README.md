@@ -1,178 +1,110 @@
 # Alphabees Moodle Plugin
 
 ## Overview
-The **Alphabees Moodle Plugin** integrates a powerful AI tutor chat widget into Moodle, enabling precise placement using Moodle's block structure. It seamlessly combines integration with a high-quality custom UI and backend, fully customizable through the Alphabees portal.
 
-This plugin leverages Moodle's flexible block placement capabilities while incorporating robust WebSocket-driven communication and advanced customization options, ensuring a high-performance and user-friendly AI tutoring solution.
+The **Alphabees Moodle Plugin** adds the Alphabees AI tutor chat widget to Moodle as a block. It lets Moodle administrators place AI tutors in courses and pages while managing tutor configuration, knowledge sources, styling, and portal-managed placements through the Alphabees portal.
 
-- **Current stable release:** 3.0.1
-- **Supported Moodle versions:** 4.1 LTS through 5.2
-- **Portal:** [portal.alphalearn.ai](https://portal.alphalearn.ai)
+- Current stable release: **3.0.2**
+- Supported Moodle versions: **4.1 LTS through 5.2**
+- Portal: [portal.alphalearn.ai](https://portal.alphalearn.ai)
+- Moodle Plugin Directory: [moodle.org/plugins/block_alphabees](https://moodle.org/plugins/block_alphabees)
+- Setup video: [YouTube walkthrough](https://www.youtube.com/watch?v=ph7LRtlOa_8)
 
 ---
 
-## How It Works: Alphabees AI Tutor Integration
+## How It Works
 
-### **Step 1: Register on the Alphabees Portal**
-Start by registering at [portal.alphalearn.ai](https://portal.alphalearn.ai), where you can:
-- Upload files and connect external data sources (e.g., websites) to build a custom knowledge base.
-- Design chat widget styles with customizable options, including:
-  - Logo and placeholder messages.
-  - Colors and fonts.
-  - Placement on the screen (e.g., bottom-right, bottom-left, center).
+### 1. Create Your Alphabees Account
 
-### **Step 2: Configure AI Tutors**
-Create AI tutors using templates such as Q&A Tutor or Tutor Mode. Customize each tutor with:
-- Assigned knowledge bases.
-- Chat widget styles.
-- Behavior settings:
-  - Tone, engagement level, and strict topic adherence.
-  - Enable live web search or include sources.
-- AI model providers like OpenAI, Anthropic, or Meta.
-- Custom prompt instructions for tailored interactions.
+Register at [portal.alphalearn.ai](https://portal.alphalearn.ai). In the portal you can:
 
-### **Step 3: Deploy the AI Tutor**
-Deploy your AI tutor in two ways:
-- **Embed on Websites**: Use an HTML snippet to add the tutor to any website.
-- **Integrate with Moodle**: Install the Alphabees Moodle block plugin for seamless deployment within Moodle environments.
+- Create AI tutors.
+- Upload files and connect knowledge sources.
+- Configure tutor behavior, prompts, and model settings.
+- Customize the chat widget appearance.
+- Manage Moodle placements from the portal, if enabled.
 
-### **Step 4: Integrate with Moodle**
-1. Generate an API key from the Alphabees portal.
-2. Enter the API key into the admin settings of the Alphabees Moodle plugin.
-3. Add the Alphabees block plugin wherever needed within Moodle.
-4. In the block settings, select the desired AI tutor from a dropdown list of tutors created in the Alphabees portal.
-5. Once configured, the AI tutor is ready to interact with Moodle users.
+### 2. Install the Moodle Plugin
+
+Install the plugin from the Moodle Plugin Directory:
+
+[https://moodle.org/plugins/block_alphabees](https://moodle.org/plugins/block_alphabees)
+
+You can also install the plugin manually by uploading the plugin ZIP file through Moodle's built-in plugin installer.
+
+### 3. Connect Moodle to Alphabees
+
+After installation:
+
+1. Open **Site administration > Plugins > Blocks > Alphabees**.
+2. Enter the API key from the Alphabees portal.
+3. Save the plugin settings.
+4. Click **Connect now** in the plugin settings.
+
+The API key determines which Alphabees client/account this Moodle site connects to. If you change the API key later, save the settings again and click **Connect now** to reconnect the Moodle site with the new client.
+
+### 4. Add or Manage AI Tutors
+
+You can use Alphabees in two ways:
+
+- Add the Alphabees block manually in Moodle and select the desired AI tutor in the block settings.
+- Manage placements from the Alphabees portal, where supported, and let the plugin synchronize Moodle block instances.
 
 ---
 
 ## Features
 
-- **Granular Placement Control**: Place the chat widget in specific courses, dashboards, or other Moodle pages using block functionality.
-- **Portal-Managed Placements**: Optionally let the Alphabees portal create and synchronize Moodle block placements.
-- **Automatic Site Registration**: Register the Moodle site with the Alphabees backend after the API key is saved.
-- **Web-Services Integration**: Optional one-click setup creates a dedicated service user and token for course, user, grade, and completion sync.
-- **Signed Backend Communication**: Site identity, Ed25519 request signing, nonce replay protection, and retry handling for backend events.
-- **High-Quality UI**: The chat widget features an advanced, responsive design independent of Moodle’s UI.
-- **Customizable Styling**: Configure widget colors, fonts, logos, and placement via the Alphabees portal.
-- **AI-Powered Tutoring**: Supports AI-driven interaction for answering questions and engaging with learners in real time.
-- **WebSocket Communication**: Real-time chat experience powered by WebSockets for fast, seamless interactions.
-- **Multi-language Support**: Available in English and German for broader accessibility.
-- **File Metadata Options**: Add metadata such as readability index, tone of voice, and persona to enhance AI responses.
+- **Personalized AI tutoring**: Learners receive instant, course-aware support, explanations, practice prompts, and feedback in 80+ languages.
+- **Learner memory and profiles**: Alphabees can build learning context over time to better support individual strengths, gaps, preferences, and progress.
+- **Centralized tutor management**: Create, customize, and deploy AI tutors, support agents, and learning assistants from the Alphabees portal.
+- **Knowledge management with sources**: Connect Moodle courses and uploaded knowledge sources so answers can reference the material they are based on.
+- **Usage and cost control**: Manage AI usage with limits, quotas, and response controls across learners, courses, departments, or institutions.
+- **Educator assistants**: Create AI assistants that help answer recurring academic, organizational, or support questions.
+- **Course and exercise support**: Use AI to support course content creation, exercise generation, quiz ideas, summaries, and personalized learning activities.
+- **Analytics and learner support**: Help educators identify learning gaps, review interactions, and provide more targeted support.
+- **Moodle and mobile delivery**: Bring AI support into Moodle desktop and, where Moodle block rendering allows it, the official Moodle Mobile App.
+- **Custom branding**: Configure colors, logos, tone of voice, and widget behavior to match your institution.
 
 ---
 
-## Installation
+## Configuration Notes
 
-The **Alphabees Moodle Plugin** can be installed in two ways:
-
-### **1. Installation via Moodle Plugin Directory (Recommended)**
-1. Log in to your Moodle site as an administrator.
-2. Go to **Site Administration > Plugins > Install Plugins**.
-3. Search for *"Alphabees"* in the Plugin Directory.
-4. Click **Install now** to download and install the plugin.
-5. Follow the on-screen prompts to complete the installation.
-6. Navigate to **Site Administration > Plugins > Blocks > Alphabees** to configure the plugin.
-
-### **2. Installation via Moodle's Built-in Plugin Installer (ZIP File)**
-1. Download the latest plugin ZIP file from the repository: [alphabees.zip](./alphabees.zip).
-2. Log in to your Moodle site as an administrator.
-3. Go to **Site Administration > Plugins > Install Plugins**.
-4. Upload the ZIP file and click **Install plugin**.
-5. Follow the on-screen prompts to finalize the installation.
-6. Navigate to **Site Administration > Plugins > Blocks > Alphabees** to configure the plugin.
+- The API key is stored in the Moodle plugin settings.
+- The API key is sent during site registration when **Connect now** is clicked.
+- After registration, backend communication uses the signed Moodle site registration.
+- If the API key is replaced, save the settings and click **Connect now** again.
+- If Moodle still shows old widget behavior after an update, clear Moodle caches.
 
 ---
 
-For more detailed instructions, visit the [Installation Wiki](https://github.com/alphabees-25/moodle-block_alphabees/wiki/Installation).
+## Documentation and Help
 
----
-
-## Configuration
-1. Register a free or paid account on portal.alphalearn.ai and retrieve your API key
-![Retrieve API-KEY](assets_github/retrieve_api-key_000.png)
-
-1. Enter your API key from the Alphabees portal in the plugin settings.
-![Enter API-KEY](assets_github/enter_apikey_001.png)
-
-2. Customize the chat widget appearance through the Alphabees portal, including colors, fonts, logos, and placement.
-![Show Chat Widget](assets_github/open_chat_widget_005.png)
-
-3. Add the Alphabees block to specific courses or pages in Moodle.
-![Add Block Alphabees AI Tutor](assets_github/add_block_Alphabees_002.png)
-
-4. Use the block settings to select the desired AI tutor from the dropdown list.
-![Configure Block Instance](assets_github/configure_block_instance_003.png)
-
-![Select AI Tutor from dropdown](assets_github/select_ai_tutor_004.png)
-
-## Customizations
-1. Change size of chat window.
-![Edit Window Size](assets_github/edit_window_size_006.png)
-
-2. Change position of chat window.
-![Edit Window Size](assets_github/move_chat_window_007.png)
-
----
-
-## Plans
-
-Alphabees offers free and paid plans through the Alphabees portal. Current plan limits and pricing are shown at [portal.alphalearn.ai](https://portal.alphalearn.ai).
-
----
-
-## Usage
-
-1. Add the **Alphabees AI Tutor** block to a Moodle course or desired page.
-2. Upload files and include metadata (if applicable) to optimize AI interactions.
-3. Style the widget via the Alphabees portal to align with your branding.
-4. Interact with the AI tutor through the dynamic chat widget, powered by real-time WebSocket communication.
-
----
-
-## Development and Contributions
-
-- **GitHub Repository**: [moodle-block_alphabees](https://github.com/alphabees-25/moodle-block_alphabees)
-- Contributions are welcome! Please fork the repository, make your changes, and submit a pull request.
+- Moodle Plugin Directory: [block_alphabees](https://moodle.org/plugins/block_alphabees)
+- Setup video: [Alphabees Moodle setup on YouTube](https://www.youtube.com/watch?v=ph7LRtlOa_8)
+- Alphabees portal: [portal.alphalearn.ai](https://portal.alphalearn.ai)
 
 ---
 
 ## Privacy
 
-This plugin complies with Moodle's privacy policies. It does not store personal data on Moodle but communicates with the Alphabees backend. For more information, refer to the `PRIVACY.md` file.
+This plugin does not store chat history in Moodle. It communicates with the Alphabees backend to provide the AI tutor experience and, when enabled, to synchronize Moodle data through the configured web-services integration. See `PRIVACY.md` for details.
 
 ---
 
 ## License
 
-This plugin is licensed under the GNU General Public License v3.0. For more details, see the `LICENSE` file included in the repository.
+This Moodle plugin is licensed under the GNU General Public License v3.0. See `LICENSE` for details.
 
 ## Proprietary Components
 
-The Alphabees Chat Widget is a proprietary, externally hosted JavaScript file dynamically loaded into Moodle via this plugin.
-To ensure consistency and efficiency, the widget is centrally managed and versioned on our servers. This approach reduces maintenance overhead across plugins for different LMS platforms, enabling seamless updates and a consistent user experience.
-As part of our business model, the chat widget generates revenue to finance ongoing operations and development. For this reason, it is not open-source, though the Moodle plugin code remains fully open-source and compliant with Moodle's development standards.
-
----
-
-## Changelog
-
-For a full history of changes, see [CHANGELOG.md](./CHANGELOG.md).
-
-| Version | Date | Highlights |
-|---------|------|------------|
-| [3.0.1](./CHANGELOG.md#301---2026-05-18) | 2026-05-18 | Upgrade fix for V3 database tables |
-| [3.0.0](./CHANGELOG.md#300---2026-05-10) | 2026-05-10 | Stable release, backend registration, signed sync, web-services integration |
-| [2.0.3](./CHANGELOG.md#203---2025-10-14) | 2025-10-14 | AMD build bug fix |
-| [2.0.1](./CHANGELOG.md#201---2025-10-09) | 2025-10-09 | Moodle 5.1 support |
-| [2.0.0](./CHANGELOG.md#200---2025-09-03) | 2025-09-03 | Mobile app support, Moodle 5 compliance |
-| [1.0.1](./CHANGELOG.md#101---2025-01-28) | 2025-01-28 | Widget update, Moodle flag fixes |
-| [1.0.0](./CHANGELOG.md#100---2024-12-11) | 2024-12-11 | Initial release |
+The Alphabees chat widget is a proprietary, externally hosted JavaScript application loaded by this plugin. The widget is centrally managed and updated by Alphabees to provide a consistent AI tutor experience across supported platforms.
 
 ---
 
 ## Support
 
-For issues, please:
-- Report them via [GitHub Issues](https://github.com/alphabees-25/moodle-block_alphabees/issues).
-- Contact support at [support@alphabees.de](mailto:support@alphabees.de).
+For support:
 
+- Use the Alphabees portal.
+- Report plugin issues through the Moodle Plugin Directory or GitHub.
+- Contact support at [support@alphabees.de](mailto:support@alphabees.de).

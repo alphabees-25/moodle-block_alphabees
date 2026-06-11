@@ -25,34 +25,146 @@
 /**
  * Settings updatedcallback fired when the API key changes.
  *
- * Triggers a (re-)registration with the backend so the new key is exchanged
- * along with the site's public key. Runs async via an ad-hoc task to keep
- * the settings save snappy and avoid leaking backend latency into the UI.
+ * Clearing the key pauses a registered site. Saving a non-empty key only
+ * updates local state; admins explicitly use "Connect now" or "Resume sync"
+ * for backend actions.
  *
  * @return void
  */
 function block_alphabees_apikey_changed(): void {
+    unset_config('connect_requested', 'block_alphabees');
+    unset_config('connect_requested_at', 'block_alphabees');
+
     $apikey = get_config('block_alphabees', 'apikey');
     if (empty($apikey)) {
-        // Key was cleared — drop registration state so a future re-key starts fresh.
-        \block_alphabees\local\site_registry::reset_registration();
+        unset_config('mobile_apikey', 'block_alphabees');
+        // Key was cleared by a Moodle admin. Treat that as a site pause, not
+        // a disconnect: keep registration, signing keys, and WS tokens intact.
+        if (\block_alphabees\local\site_registry::is_registered()) {
+            block_alphabees_queue_site_lifecycle_event(
+                'site.paused',
+                'Portal API key missing'
+            );
+            \block_alphabees\local\site_registry::pause_syncs('Paused by Moodle admin');
+        } else {
+            \block_alphabees\local\site_registry::reset_registration();
+        }
         return;
     }
 
-    // Make sure we have a keypair to advertise.
-    \block_alphabees\local\site_registry::ensure_keypair();
+    unset_config('mobile_apikey', 'block_alphabees');
 
-    // Queue the registration as an ad-hoc task. The next Moodle cron tick
-    // (typically within 1 minute) picks it up; for immediate feedback the
-    // admin can use the "Connect now" button on the settings page, which
-    // runs the same task synchronously with proper notification handling.
-    //
-    // Why not run it inline here: the settings updatedcallback fires inside
-    // a request flow that has already started serializing the session;
-    // making a multi-second outbound HTTP call from here triggers Moodle's
-    // "mutated session after close" warning and forces the awkward
-    // "Continue" intermediate page on save.
-    \core\task\manager::queue_adhoc_task(new \block_alphabees\task\register_site());
+    $currentfingerprint = \block_alphabees\local\site_registry::current_api_key_fingerprint();
+    $registeredfingerprint = \block_alphabees\local\site_registry::registered_api_key_fingerprint();
+    $sameasregistered = $currentfingerprint !== null
+        && $registeredfingerprint !== null
+        && hash_equals($registeredfingerprint, $currentfingerprint);
+
+    if (\block_alphabees\local\site_registry::is_registered()
+        && \block_alphabees\local\site_registry::is_sync_paused()
+        && $sameasregistered
+        && !\block_alphabees\local\site_registry::is_registration_blocked()) {
+        return;
+    }
+
+    // A changed API key invalidates the previous registration and clears the
+    // permanent-failure gate. Registration itself is an explicit Connect action.
+    \block_alphabees\local\site_registry::reset_registration();
+    \block_alphabees\local\site_registry::clear_portal_disconnect();
+}
+
+/**
+ * Queue a signed site lifecycle event for the Alphabees backend.
+ *
+ * @param string $eventtype
+ * @param string $reason
+ * @return void
+ */
+function block_alphabees_queue_site_lifecycle_event(
+    string $eventtype,
+    string $reason
+): void {
+    \block_alphabees\local\backend_client::queue_retry(
+        \block_alphabees\local\site_registry::path_lifecycle(),
+        block_alphabees_site_lifecycle_payload($eventtype, $reason),
+        0
+    );
+}
+
+/**
+ * Drop queued lifecycle events superseded by a newer explicit admin action.
+ *
+ * @param string $eventtype
+ * @return void
+ */
+function block_alphabees_drop_queued_site_lifecycle_event(string $eventtype): void {
+    global $DB;
+
+    $rows = $DB->get_records('block_alphabees_retryqueue', [
+        'endpoint' => \block_alphabees\local\site_registry::path_lifecycle(),
+    ]);
+    foreach ($rows as $row) {
+        $payload = json_decode((string)$row->payload, true);
+        if (is_array($payload)
+            && isset($payload['event_type'])
+            && (string)$payload['event_type'] === $eventtype) {
+            $DB->delete_records('block_alphabees_retryqueue', ['id' => $row->id]);
+        }
+    }
+}
+
+/**
+ * Send a signed site lifecycle event to the Alphabees backend immediately.
+ *
+ * @param string $eventtype
+ * @param string $reason
+ * @return array backend_client result
+ */
+function block_alphabees_post_site_lifecycle_event(
+    string $eventtype,
+    string $reason
+): array {
+    return \block_alphabees\local\backend_client::post(
+        \block_alphabees\local\site_registry::path_lifecycle(),
+        block_alphabees_site_lifecycle_payload($eventtype, $reason)
+    );
+}
+
+/**
+ * Build the canonical lifecycle payload used for direct sends and retries.
+ *
+ * @param string $eventtype
+ * @param string $reason
+ * @return array
+ */
+function block_alphabees_site_lifecycle_payload(
+    string $eventtype,
+    string $reason
+): array {
+    $plugin = new \stdClass();
+    require(__DIR__ . '/version.php');
+
+    $payload = [
+        'event_type' => $eventtype,
+        'reason' => $reason,
+        'plugin_version' => isset($plugin->release) ? (string)$plugin->release : '',
+        'occurred_at' => gmdate('Y-m-d\TH:i:s\Z'),
+    ];
+    if ($eventtype === 'site.paused') {
+        $payload['api_key_present'] = \block_alphabees\local\site_registry::api_key_present();
+        $payload['api_key_status'] = \block_alphabees\local\site_registry::api_key_status();
+    }
+    return $payload;
+}
+
+/**
+ * Whether local resume is allowed for the current saved API key.
+ *
+ * @return bool
+ */
+function block_alphabees_can_resume_site(): bool {
+    return \block_alphabees\local\site_registry::api_key_present()
+        && !\block_alphabees\local\site_registry::is_registration_blocked();
 }
 
 /**
@@ -84,37 +196,9 @@ function block_alphabees_render_status_panel(): string {
 function block_alphabees_render_connection_status(): string {
     $registry = '\block_alphabees\local\site_registry';
 
-    // First-time register-on-demand: if a key is configured but we've never
-    // attempted to register yet, run the task inline now so the panel below
-    // shows the backend's actual response immediately after a fresh API-key
-    // save — without waiting on cron or fighting Moodle's notification
-    // pipeline from the updatedcallback.
-    //
-    // Only fire on a plain GET render. Moodle includes settings.php during
-    // POST save processing too (to build the admin tree); making an outbound
-    // HTTP call there bleeds into the session-write-close window and triggers
-    // "mutated session after it was closed" warnings + the "Continue" page.
-    $apikey = get_config('block_alphabees', 'apikey');
-    $requestmethod = isset($_SERVER['REQUEST_METHOD']) ? strtoupper((string)$_SERVER['REQUEST_METHOD']) : 'GET';
-    if ($requestmethod === 'GET'
-        && !empty($apikey)
-        && !\block_alphabees\local\site_registry::is_registered()
-        && \block_alphabees\local\site_registry::last_register_attempt_at() === null) {
-        // The mtrace() calls inside the task write to stdout. In a web context that
-        // becomes part of the page output, which Moodle then sees as "Error
-        // output, so disabling automatic redirect" → forces the awkward
-        // "Continue" intermediate page. Wrap in an output buffer so the task
-        // can do its diagnostics without leaking into the rendered page.
-        ob_start();
-        try {
-            (new \block_alphabees\task\register_site())->execute();
-        } catch (\Throwable $e) {
-            // Expected for transient failures — error is already recorded
-            // in registry by record_register_attempt().
-            unset($e);
-        }
-        ob_end_clean();
-    }
+    // Do not perform registration while rendering this settings panel. Moodle
+    // page loads must never wait on the Alphabees backend; admins use the
+    // explicit "Connect now" action when they want a registration attempt.
 
     $registered = $registry::is_registered();
     $registeredat = $registry::registered_at();
@@ -122,40 +206,121 @@ function block_alphabees_render_connection_status(): string {
     $publickey = $registry::public_key();
     $lastattempt = $registry::last_register_attempt_at();
     $lasterror = $registry::last_register_error();
-
-    // State badge + Connect now button on a single header row so both
-    // the visual status and the primary action live at the top of the
-    // panel without consuming much vertical space.
-    $statelabel = $registered
+    $blocked = $registry::is_registration_blocked();
+    $blockreason = $registry::registration_block_reason();
+    $syncpaused = $registry::is_sync_paused();
+    $syncpausedat = $registry::sync_paused_at();
+    $syncpausereason = $registry::sync_pause_reason();
+    // State badge + contextual action buttons on a single header row so both
+    // the visual status and primary actions live at the top of the panel.
+    $statelabel = $blocked
+        ? \html_writer::span(get_string('status_registration_blocked', 'block_alphabees'), 'badge badge-danger')
+        : ($registered && $syncpaused
+        ? \html_writer::span(get_string('status_sync_paused', 'block_alphabees'), 'badge badge-warning')
+        : ($registered
         ? \html_writer::span(get_string('status_connected', 'block_alphabees'), 'badge badge-success')
-        : \html_writer::span(get_string('status_disconnected', 'block_alphabees'), 'badge badge-danger');
+        : \html_writer::span(get_string('status_disconnected', 'block_alphabees'), 'badge badge-danger')));
 
     global $CFG;
     $connecturl = new \moodle_url('/blocks/alphabees/connect.php', ['sesskey' => sesskey()]);
+    $disconnecturl = new \moodle_url('/blocks/alphabees/disconnect.php', ['sesskey' => sesskey()]);
+    $resumeurl = new \moodle_url('/blocks/alphabees/resume_sync.php', ['sesskey' => sesskey()]);
     $apikeyset = !empty(get_config('block_alphabees', 'apikey'));
-    $buttonattrs = ['class' => 'btn btn-sm btn-primary ml-3'];
-    if (!$apikeyset) {
-        $buttonattrs['class'] .= ' disabled';
-        $buttonattrs['aria-disabled'] = 'true';
-        $buttonattrs['onclick'] = 'return false;';
+    $canresume = block_alphabees_can_resume_site();
+    $buttons = '';
+    if (!$registered || $blocked) {
+        $buttonattrs = ['class' => 'btn btn-sm btn-primary ml-3'];
+        if (!$apikeyset) {
+            $buttonattrs['class'] .= ' disabled';
+            $buttonattrs['aria-disabled'] = 'true';
+            $buttonattrs['onclick'] = 'return false;';
+        }
+        $buttons .= \html_writer::link(
+            $connecturl,
+            get_string('connect_now', 'block_alphabees'),
+            $buttonattrs
+        );
     }
-    $button = \html_writer::link(
-        $connecturl,
-        get_string('connect_now', 'block_alphabees'),
-        $buttonattrs
-    );
+    if ($registered && $syncpaused && $canresume) {
+        $buttons .= \html_writer::link(
+            $resumeurl,
+            get_string('resume_sync_now', 'block_alphabees'),
+            ['class' => 'btn btn-sm btn-warning ' . ($buttons === '' ? 'ml-3' : 'ml-2')]
+        );
+    }
+    if ($registered) {
+        $buttons .= \html_writer::link(
+            $disconnecturl,
+            get_string('disconnect_now', 'block_alphabees'),
+            [
+                'class' => 'btn btn-sm btn-outline-danger ' . ($buttons === '' ? 'ml-3' : 'ml-2'),
+                'onclick' => 'return confirm(' . json_encode(get_string('disconnect_confirm', 'block_alphabees')) . ');',
+            ]
+        );
+    }
 
     $headerrow = \html_writer::div(
         \html_writer::tag('strong', get_string('connectionstatus', 'block_alphabees') . ' ')
-        . $statelabel . $button,
+        . $statelabel . $buttons,
         'd-flex align-items-center mb-2'
     );
+    if ($blocked) {
+        $headerrow .= \html_writer::div(
+            get_string('connectionstatus_blocked_help', 'block_alphabees'),
+            'alert alert-danger py-2 mb-2'
+        );
+    } else if (!$registered && !$apikeyset) {
+        $headerrow .= \html_writer::div(
+            get_string('connectionstatus_apikey_missing_help', 'block_alphabees'),
+            'alert alert-warning py-2 mb-2'
+        );
+    } else if (!$registered && $apikeyset) {
+        $headerrow .= \html_writer::div(
+            get_string('connectionstatus_connect_required_help', 'block_alphabees'),
+            'alert alert-info py-2 mb-2'
+        );
+    } else if ($registered && $syncpaused) {
+        $headerrow .= \html_writer::div(
+            get_string('connectionstatus_sync_paused_help', 'block_alphabees'),
+            'alert alert-warning py-2 mb-2'
+        );
+        if (!$canresume) {
+            $resumehelp = \block_alphabees\local\site_registry::api_key_status() === 'missing'
+                ? get_string('connectionstatus_sync_paused_apikey_missing_help', 'block_alphabees')
+                : get_string('resume_sync_requires_apikey', 'block_alphabees');
+            $headerrow .= \html_writer::div(
+                $resumehelp,
+                'alert alert-info py-2 mb-2'
+            );
+        }
+    }
 
     // Build the timestamp + diagnostic rows; both go inside the
     // collapsible <details> so the panel stays compact when healthy.
     $rows = [];
+    if ($blocked) {
+        $rows[] = [
+            get_string('status_registration_blocked_detail', 'block_alphabees'),
+            \html_writer::span(s($blockreason ?? ''), 'text-danger'),
+            get_string('connectionstatus_blocked_help', 'block_alphabees'),
+        ];
+    }
     if ($registeredat) {
         $rows[] = [get_string('status_registeredat', 'block_alphabees'), userdate($registeredat), null];
+    }
+    if ($syncpaused) {
+        $rows[] = [
+            get_string('status_sync_paused_detail', 'block_alphabees'),
+            $syncpausedat ? userdate($syncpausedat) : get_string('status_sync_paused', 'block_alphabees'),
+            get_string('connectionstatus_sync_paused_help', 'block_alphabees'),
+        ];
+        if ($syncpausereason !== null) {
+            $rows[] = [
+                get_string('status_sync_pause_reason', 'block_alphabees'),
+                s($syncpausereason),
+                null,
+            ];
+        }
     }
     if ($lastsync) {
         $rows[] = [get_string('status_lastsync', 'block_alphabees'), userdate($lastsync), null];
@@ -186,7 +351,7 @@ function block_alphabees_render_connection_status(): string {
 
     // Collapsed by default for healthy sites; auto-opens when there's an
     // active error so the admin lands on the diagnostic context.
-    $detailsopen = $lasterror !== null || !$registered;
+    $detailsopen = $blocked || $syncpaused || $lasterror !== null || !$registered;
     $details = \html_writer::tag(
         'details',
         \html_writer::tag(
@@ -226,11 +391,9 @@ function block_alphabees_render_ws_status(): string {
         'd-flex align-items-center mb-2'
     );
 
-    // Pull the function list from db/services.php so the UI is always in
-    // sync with whatever the plugin actually authorises.
-    $services = [];
-    require($CFG->dirroot . '/blocks/alphabees/db/services.php');
-    $functions = $services['Alphabees']['functions'] ?? [];
+    // Pull the function list from db/services.php via the service shortname so
+    // the UI stays in sync even when the human-readable service name changes.
+    $functions = \block_alphabees\local\ws_setup::declared_service_functions();
     $count = count($functions);
 
     // Compact one-liner shown directly under the badge.
@@ -239,6 +402,66 @@ function block_alphabees_render_ws_status(): string {
         get_string($statuskey, 'block_alphabees'),
         'small text-muted mb-2'
     );
+
+    $diagnostics = \block_alphabees\local\ws_setup::diagnostics();
+    $selftestlabels = [
+        'never' => get_string('ws_selftest_status_never', 'block_alphabees'),
+        'passed' => get_string('ws_selftest_status_passed', 'block_alphabees'),
+        'failed' => get_string('ws_selftest_status_failed', 'block_alphabees'),
+    ];
+    $postlabels = [
+        'never' => get_string('ws_token_post_status_never', 'block_alphabees'),
+        'queued' => get_string('ws_token_post_status_queued', 'block_alphabees'),
+        'ok' => get_string('ws_token_post_status_ok', 'block_alphabees'),
+        'transient' => get_string('ws_token_post_status_transient', 'block_alphabees'),
+        'error' => get_string('ws_token_post_status_error', 'block_alphabees'),
+        'revoked_queued' => get_string('ws_token_post_status_revoked_queued', 'block_alphabees'),
+        'revoked_ok' => get_string('ws_token_post_status_revoked_ok', 'block_alphabees'),
+    ];
+
+    $selftestvalue = $selftestlabels[$diagnostics['selftest_status']]
+        ?? s($diagnostics['selftest_status']);
+    if (!empty($diagnostics['selftest_at'])) {
+        $selftestvalue .= ' (' . userdate($diagnostics['selftest_at']) . ')';
+    }
+    if (!empty($diagnostics['selftest_function_count'])) {
+        $selftestvalue .= \html_writer::div(
+            get_string('ws_selftest_function_count', 'block_alphabees', $diagnostics['selftest_function_count']),
+            'small text-muted'
+        );
+    }
+    if (!empty($diagnostics['selftest_missing_functions'])) {
+        $selftestvalue .= \html_writer::div(
+            get_string(
+                'ws_selftest_missing_functions',
+                'block_alphabees',
+                implode(', ', $diagnostics['selftest_missing_functions'])
+            ),
+            'small text-danger'
+        );
+    }
+    if (!empty($diagnostics['selftest_error'])) {
+        $selftestvalue .= \html_writer::div(s($diagnostics['selftest_error']), 'small text-danger');
+    }
+
+    $postvalue = $postlabels[$diagnostics['post_status']] ?? s($diagnostics['post_status']);
+    if (!empty($diagnostics['post_at'])) {
+        $postvalue .= ' (' . userdate($diagnostics['post_at']) . ')';
+    }
+    if (!empty($diagnostics['post_httpcode'])) {
+        $postvalue .= \html_writer::div(
+            get_string('ws_token_post_httpcode', 'block_alphabees', $diagnostics['post_httpcode']),
+            'small text-muted'
+        );
+    }
+    if (!empty($diagnostics['post_error'])) {
+        $postvalue .= \html_writer::div(s($diagnostics['post_error']), 'small text-danger');
+    }
+
+    $diagnostictable = block_alphabees_render_status_table([
+        [get_string('ws_selftest_status', 'block_alphabees'), $selftestvalue, null],
+        [get_string('ws_token_post_status', 'block_alphabees'), $postvalue, null],
+    ]);
 
     // Function list lives inside the collapsible — admins don't need it
     // every time, but it's one click away when they want to audit scope.
@@ -251,7 +474,7 @@ function block_alphabees_render_ws_status(): string {
     $detailsbody = \html_writer::div(
         get_string('ws_enable_consent', 'block_alphabees'),
         'mb-3'
-    ) . \html_writer::tag(
+    ) . $diagnostictable . \html_writer::tag(
         'strong',
         get_string('ws_grants_summary', 'block_alphabees', $count)
     ) . \html_writer::div(
@@ -278,10 +501,13 @@ function block_alphabees_render_ws_status(): string {
 /**
  * Settings updatedcallback for the WS-integration checkbox.
  *
- * Tick → run the full auto-setup chain and queue an ad-hoc task that sends
- * the freshly-generated token to the backend over the signed channel.
- * Untick → revoke the token. Errors surface via Moodle's notification stack
- * since the callback runs inside the admin-save flow.
+ * Tick → run the local auto-setup chain. If the site is already connected and
+ * active, queue an ad-hoc task that sends the freshly-generated token to the
+ * backend over the signed channel. Untick → revoke the local token and inform
+ * the backend only when normal signed backend calls are currently allowed.
+ * Errors are persisted into the status panel diagnostics; settings callbacks
+ * must not mutate Moodle notifications because admin/upgradesettings.php may
+ * already have closed the session.
  *
  * @return void
  */
@@ -292,32 +518,50 @@ function block_alphabees_ws_enabled_changed(): void {
         try {
             $token = \block_alphabees\local\ws_setup::enable();
         } catch (\Throwable $e) {
-            // Roll the checkbox back so the UI matches actual state, and
-            // surface the error to the admin via Moodle's notification stack.
+            try {
+                \block_alphabees\local\ws_setup::disable();
+            } catch (\Throwable $disableerror) {
+                unset($disableerror);
+            }
+            // Roll the checkbox back so the UI matches actual state and store
+            // the failure for the diagnostics panel.
             set_config('ws_enabled', 0, 'block_alphabees');
-            \core\notification::error(get_string('ws_enable_failed', 'block_alphabees', $e->getMessage()));
+            \block_alphabees\local\ws_setup::record_token_post_status('error', $e->getMessage());
             return;
         }
-        // Send the token over the existing signed Ed25519 channel.
-        // Async via ad-hoc task — same reasoning as register_site /
-        // post_placement_event: lifecycle hooks must not bleed into the
-        // session-write-close window.
+        if (!\block_alphabees\local\site_registry::is_registered()
+            || \block_alphabees\local\site_registry::is_registration_blocked()
+            || \block_alphabees\local\site_registry::is_sync_paused()) {
+            \block_alphabees\local\ws_setup::record_token_post_status('never');
+            return;
+        }
+
+        // Send the token over the existing signed Ed25519 channel. Async via
+        // ad-hoc task so settings saves do not wait on the backend.
         $task = new \block_alphabees\task\post_ws_token();
         $task->set_custom_data((object)[
             'token' => $token,
             'service_shortname' => \block_alphabees\local\ws_setup::SERVICE_SHORTNAME,
         ]);
         \core\task\manager::queue_adhoc_task($task);
-        \core\notification::success(get_string('ws_enable_success', 'block_alphabees'));
+        \block_alphabees\local\ws_setup::record_token_post_status('queued');
         return;
     }
 
     try {
         \block_alphabees\local\ws_setup::disable();
     } catch (\Throwable $e) {
-        \core\notification::error(get_string('ws_disable_failed', 'block_alphabees', $e->getMessage()));
+        set_config('ws_enabled', 1, 'block_alphabees');
+        \block_alphabees\local\ws_setup::record_token_post_status('error', $e->getMessage());
         return;
     }
+    if (!\block_alphabees\local\site_registry::is_registered()
+        || \block_alphabees\local\site_registry::is_registration_blocked()
+        || \block_alphabees\local\site_registry::is_sync_paused()) {
+        \block_alphabees\local\ws_setup::record_token_post_status('never');
+        return;
+    }
+
     // Inform the backend that the token is revoked so it doesn't keep
     // calling Moodle with a now-invalid credential.
     $task = new \block_alphabees\task\post_ws_token();
@@ -326,7 +570,7 @@ function block_alphabees_ws_enabled_changed(): void {
         'service_shortname' => \block_alphabees\local\ws_setup::SERVICE_SHORTNAME,
     ]);
     \core\task\manager::queue_adhoc_task($task);
-    \core\notification::success(get_string('ws_disable_success', 'block_alphabees'));
+    \block_alphabees\local\ws_setup::record_token_post_status('revoked_queued');
 }
 
 /**

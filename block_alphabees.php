@@ -22,7 +22,6 @@
  * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
-use block_alphabees\local\backend_client;
 use block_alphabees\local\crypto;
 use block_alphabees\local\placement_repository;
 use block_alphabees\local\site_registry;
@@ -33,6 +32,9 @@ use block_alphabees\local\site_registry;
  * Defines the Alphabees AI Tutor block.
  */
 class block_alphabees extends block_base {
+
+    /** Fallback widget color used when no portal-provided color is stored locally. */
+    private const DEFAULT_PRIMARY_COLOR = '#72AECF';
 
     /**
      * Initialize the block.
@@ -123,7 +125,10 @@ class block_alphabees extends block_base {
      * delivered even if the backend is briefly unavailable.
      */
     private function emit_placement_event(string $event): void {
-        if (!site_registry::is_registered()) {
+        if (site_registry::is_registration_blocked() || !site_registry::is_registered()) {
+            return;
+        }
+        if (site_registry::is_sync_paused()) {
             return;
         }
         if (empty($this->instance) || empty($this->instance->id)) {
@@ -250,6 +255,16 @@ class block_alphabees extends block_base {
             return $this->content;
         }
 
+        if (site_registry::is_registration_blocked()) {
+            $reason = site_registry::registration_block_reason() ?? '';
+            $message = has_capability('moodle/site:config', context_system::instance())
+                ? get_string('status_registration_blocked_chat_admin', 'block_alphabees', $reason)
+                : get_string('status_registration_blocked_chat', 'block_alphabees');
+            $this->content = new stdClass();
+            $this->content->text = \html_writer::div(s($message), 'alert alert-warning mb-0');
+            return $this->content;
+        }
+
         // Fetch bot ID securely.
         $botid = isset($this->config->botid) ? clean_param($this->config->botid, PARAM_TEXT) : null;
         if (empty($botid)) {
@@ -258,12 +273,9 @@ class block_alphabees extends block_base {
             return $this->content;
         }
 
-        // Primary color: prefer the per-placement override (set via portal
-        // update_placement → primary_color), otherwise auto-fetch from the
-        // bot's catalog entry as before.
-        $colorov = isset($this->config->primary_color_override)
-            ? clean_param((string)$this->config->primary_color_override, PARAM_TEXT) : '';
-        $primarycolor = $colorov !== '' ? $colorov : $this->fetch_primary_color($apikey, $botid);
+        // Never call the Alphabees API while rendering a Moodle page. If the
+        // backend is unreachable, get_content() must still return immediately.
+        $primarycolor = $this->resolve_primary_color();
         // Build extra context for downstream processing.
         global $USER, $COURSE, $CFG, $DB;
 
@@ -331,40 +343,14 @@ class block_alphabees extends block_base {
 
 
     /**
-     * Fetch the primary color for the selected bot.
+     * Resolve the widget color from local placement config only.
      *
-     * @param string $apikey The API key.
-     * @param string $botid The bot ID.
-     * @return string The primary color, or a fallback color if unavailable.
+     * @return string
      */
-    private function fetch_primary_color(string $apikey, string $botid): string {
-        $apikey = clean_param($apikey, PARAM_TEXT);
-        $botid = clean_param($botid, PARAM_TEXT);
-
-        $url = 'https://api.alphalearn.ai/al/tutors/tutor/moodle-list/' . urlencode($apikey);
-
-        $curl = new curl(['timeout' => 10]);
-        $response = $curl->get($url);
-
-        if (!$response) {
-            debugging('[block_alphabees] Failed to fetch primary color. Using fallback.', DEBUG_DEVELOPER);
-            return '#72AECF';
-        }
-
-        $responsedata = json_decode($response, true);
-
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            debugging('[block_alphabees] JSON decode error while fetching primary color.', DEBUG_DEVELOPER);
-            return '#72AECF';
-        }
-
-        foreach ($responsedata['data'] ?? [] as $bot) {
-            if (isset($bot['id'], $bot['primaryColor']) && $bot['id'] === $botid) {
-                return strtolower(clean_param($bot['primaryColor'], PARAM_TEXT));
-            }
-        }
-
-        debugging('[block_alphabees] Primary color not found. Using fallback.', DEBUG_DEVELOPER);
-        return '#72AECF';
+    private function resolve_primary_color(): string {
+        $color = isset($this->config->primary_color_override)
+            ? clean_param((string)$this->config->primary_color_override, PARAM_TEXT)
+            : '';
+        return preg_match('/^#[0-9a-fA-F]{6}$/', $color) ? strtolower($color) : self::DEFAULT_PRIMARY_COLOR;
     }
 }

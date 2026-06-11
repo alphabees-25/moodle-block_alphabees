@@ -40,6 +40,12 @@ if ($ADMIN->fulltree) {
         get_string('generalsettings_desc', 'block_alphabees')
     ));
 
+    $settings->add(new admin_setting_heading(
+        'block_alphabees/first_setup',
+        get_string('firstsetup', 'block_alphabees'),
+        get_string('firstsetup_desc', 'block_alphabees')
+    ));
+
     $apikeysetting = new admin_setting_configtext(
         'block_alphabees/apikey',
         get_string('apikey', 'block_alphabees'),
@@ -50,18 +56,19 @@ if ($ADMIN->fulltree) {
     $apikeysetting->set_updatedcallback('block_alphabees_apikey_changed');
     $settings->add($apikeysetting);
 
-    $settings->add(new admin_setting_configcheckbox(
+    $remoteplacementsetting = new admin_setting_configcheckbox(
         'block_alphabees/allow_remote_placement',
         get_string('allow_remote_placement', 'block_alphabees'),
         get_string('allow_remote_placement_short', 'block_alphabees'),
-        0
-    ));
+        1
+    );
+    $settings->add($remoteplacementsetting);
 
     $wssetting = new admin_setting_configcheckbox(
         'block_alphabees/ws_enabled',
         get_string('ws_enable', 'block_alphabees'),
         get_string('ws_enable_short', 'block_alphabees'),
-        0
+        1
     );
     $wssetting->set_updatedcallback('block_alphabees_ws_enabled_changed');
     $settings->add($wssetting);

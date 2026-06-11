@@ -78,5 +78,49 @@ function xmldb_block_alphabees_upgrade(int $oldversion): bool {
         upgrade_block_savepoint(true, 2026051800, 'alphabees');
     }
 
+    // 3.0.1: the portal integration toggles are opt-out now. Updating the
+    // admin setting defaults alone is not enough for existing installs because
+    // Moodle keeps the old saved config value (`0`) in config_plugins. Set the
+    // persisted value to enabled during upgrade, unless this site has already
+    // been intentionally disconnected through the local/portal disconnect flow.
+    if ($oldversion < 2026052200) {
+        $portaldisconnected = (string)(get_config('block_alphabees', 'portal_disconnected') ?: '') === '1';
+        if (!$portaldisconnected) {
+            set_config('allow_remote_placement', 1, 'block_alphabees');
+            set_config('ws_enabled', 1, 'block_alphabees');
+        }
+
+        upgrade_block_savepoint(true, 2026052200, 'alphabees');
+    }
+
+    // 3.0.2: lifecycle/status UX and retry behaviour changes. No schema
+    // changes are required; this marker makes Moodle process the release
+    // upgrade and refresh plugin caches consistently.
+    if ($oldversion < 2026060900) {
+        upgrade_block_savepoint(true, 2026060900, 'alphabees');
+    }
+
+    // 3.0.2 patch 1: narrow the local API-key rejection latch to the register
+    // endpoint only. Normal signed routes may fail because of lifecycle state
+    // mismatches and must not permanently block the saved API key.
+    if ($oldversion < 2026060901) {
+        upgrade_block_savepoint(true, 2026060901, 'alphabees');
+    }
+
+    // 3.0.2 patch 2: remember which API key fingerprint belongs to the
+    // current registration, so changing the key later forces a reconnect
+    // instead of silently keeping an old client association. Also remove the
+    // legacy mobile-only key fallback so the app can never use stale config.
+    if ($oldversion < 2026061100) {
+        $apikey = get_config('block_alphabees', 'apikey');
+        if (!empty($apikey)
+            && !empty(get_config('block_alphabees', 'registered_at'))
+            && !empty(get_config('block_alphabees', 'backend_public_key'))) {
+            set_config('registered_api_key', hash('sha256', (string)$apikey), 'block_alphabees');
+        }
+        unset_config('mobile_apikey', 'block_alphabees');
+        upgrade_block_savepoint(true, 2026061100, 'alphabees');
+    }
+
     return true;
 }

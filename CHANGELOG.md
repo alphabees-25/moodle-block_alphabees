@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.0.2] - 2026-06-11
+
+### Added
+- Portal-managed placements can now update Moodle block instances more reliably.
+- Moodle App/mobile support now uses the same relevant placement data as the web version.
+
+### Changed
+- Tutor and agent selection in block settings now shows the correct selected tutor after remote updates.
+- Tutor names are displayed more clearly when available.
+- The chat widget now loads from the production Alphabees domain.
+- Improved handling of placement updates such as tutor, color, visibility, and delete actions.
+- Improved compatibility across supported Moodle versions.
+- Bumped plugin version to `2026061100` and release label to `3.0.2`.
+
+### Fixed
+- Fixed an issue where the chat widget AMD module could fail to load in Moodle.
+
+### Upgrade Notes
+- Recommended update for all installations using portal-managed placements.
+- After updating, clear Moodle caches if the old widget version is still loaded.
+
+---
+
 ## [3.0.1] - 2026-05-18
 
 ### Fixed

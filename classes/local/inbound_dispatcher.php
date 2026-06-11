@@ -57,16 +57,26 @@ class inbound_dispatcher {
         }
 
         $body = json_decode($rawbody, true);
-        if (!is_array($body) || !isset($body['action'])) {
+        if (!is_array($body)) {
             return self::deny(400);
         }
 
-        $action = (string)$body['action'];
+        $action = self::normalise_action($body);
+        if ($action === '') {
+            return self::deny(400);
+        }
         $params = isset($body['params']) && is_array($body['params']) ? $body['params'] : [];
 
         switch ($action) {
             case 'ping':
                 return self::ok(self::action_ping());
+            case 'disconnect_site':
+            case 'revoke_registration':
+                return self::action_disconnect_site($params);
+            case 'pause_site':
+                return self::ok(self::action_pause_site($params));
+            case 'resume_site':
+                return self::action_resume_site($params);
             case 'list_placements':
                 return self::ok(self::action_list_placements());
             case 'update_placement':
@@ -111,7 +121,7 @@ class inbound_dispatcher {
         if ($site !== site_registry::site_identifier()) {
             return ['ok' => false, 'reason' => 'site'];
         }
-        if ((int)$keyid !== site_registry::key_id()) {
+        if ((int)$keyid !== site_registry::backend_key_id()) {
             return ['ok' => false, 'reason' => 'keyid'];
         }
         if (!ctype_digit((string)$ts) || !crypto::timestamp_within_window((int)$ts)) {
@@ -206,8 +216,131 @@ class inbound_dispatcher {
             'plugin_version_code' => $plugin->version ?? null,
             'placement_count' => count(placement_repository::all_instances()),
             'key_id' => site_registry::key_id(),
+            'backend_key_id' => site_registry::backend_key_id(),
+            'registration_id' => site_registry::registration_id(),
+            'api_key_present' => site_registry::api_key_present(),
+            'api_key_status' => site_registry::api_key_status(),
             'last_sync_at' => site_registry::last_sync_at(),
+            'sync_paused' => site_registry::is_sync_paused(),
+            'sync_paused_at' => site_registry::sync_paused_at(),
         ];
+    }
+
+    /**
+     * Fully disconnect this Moodle site from the portal.
+     *
+     * This is intentionally a local teardown only: it revokes active web-service
+     * tokens/assignments and clears registration state, but leaves the dedicated
+     * Moodle user and role definitions in place for a future reconnect.
+     *
+     * @return array
+     */
+    private static function action_disconnect_site(array $params): array {
+        global $DB;
+
+        try {
+            ws_setup::disable();
+        } catch (\Throwable $e) {
+            return self::deny(500, [
+                'success' => false,
+                'action' => 'disconnect_site',
+                'status' => 'failed',
+                'error' => 'ws_disable_failed',
+                'detail' => $e->getMessage(),
+            ]);
+        }
+
+        $DB->delete_records('block_alphabees_retryqueue');
+        site_registry::reset_registration();
+        $reason = self::param($params, 'reason', 'reason');
+        site_registry::mark_portal_disconnected($reason !== null ? (string)$reason : null);
+        ws_setup::record_token_post_status('revoked_ok');
+
+        return self::ok([
+            'success' => true,
+            'action' => 'disconnect_site',
+            'status' => 'disconnected',
+            'disconnected' => true,
+            'registered' => site_registry::is_registered(),
+            'portal_disconnected' => site_registry::is_portal_disconnected(),
+            'ws_enabled' => (bool)get_config('block_alphabees', 'ws_enabled'),
+            'allow_remote_placement' => (bool)get_config('block_alphabees', 'allow_remote_placement'),
+            'retry_queue_cleared' => true,
+        ]);
+    }
+
+    /**
+     * Pause outbound placement syncs/events while keeping registration intact.
+     *
+     * @param array $params
+     * @return array
+     */
+    private static function action_pause_site(array $params): array {
+        $reason = self::param($params, 'reason', 'reason');
+        site_registry::pause_syncs($reason !== null ? (string)$reason : null);
+
+        return [
+            'success' => true,
+            'action' => 'pause_site',
+            'status' => 'paused',
+            'api_key_present' => site_registry::api_key_present(),
+            'api_key_status' => site_registry::api_key_status(),
+            'sync_paused' => site_registry::is_sync_paused(),
+            'sync_paused_at' => site_registry::sync_paused_at(),
+            'sync_pause_reason' => site_registry::sync_pause_reason(),
+        ];
+    }
+
+    /**
+     * Resume outbound placement syncs/events after a portal pause.
+     *
+     * @param array $params
+     * @return array
+     */
+    private static function action_resume_site(array $params): array {
+        $requireapi = self::truthy(self::param($params, 'require_api_key', 'requireApiKey'));
+        $pausedbefore = site_registry::is_sync_paused();
+
+        if (!site_registry::api_key_present()) {
+            return self::deny(409, [
+                'success' => false,
+                'action' => 'resume_site',
+                'status' => 'blocked',
+                'error' => 'api_key_missing',
+                'require_api_key' => $requireapi,
+                'api_key_present' => false,
+                'api_key_status' => 'missing',
+            ]);
+        }
+        if (site_registry::is_registration_blocked()) {
+            return self::deny(409, [
+                'success' => false,
+                'action' => 'resume_site',
+                'status' => 'blocked',
+                'error' => 'api_key_rejected',
+                'require_api_key' => $requireapi,
+                'api_key_present' => true,
+                'api_key_status' => site_registry::api_key_status(),
+                'detail' => site_registry::registration_block_reason(),
+            ]);
+        }
+
+        self::drop_queued_lifecycle_event('site.paused');
+        self::drop_queued_lifecycle_event('site.resumed');
+        site_registry::resume_syncs();
+
+        return self::ok([
+            'success' => true,
+            'action' => 'resume_site',
+            'status' => 'resumed',
+            'require_api_key' => $requireapi,
+            'api_key_present' => site_registry::api_key_present(),
+            'api_key_status' => site_registry::api_key_status(),
+            'sync_paused_before' => $pausedbefore,
+            'sync_paused' => site_registry::is_sync_paused(),
+            'sync_paused_at' => site_registry::sync_paused_at(),
+            'sync_pause_reason' => site_registry::sync_pause_reason(),
+        ]);
     }
 
     /**
@@ -250,6 +383,15 @@ class inbound_dispatcher {
             $oldbot = isset($config->botid) ? (string)$config->botid : '';
             if ((string)$newbot !== $oldbot) {
                 $config->botid = (string)$newbot;
+                unset($config->bot_label);
+                $changed = true;
+            }
+        }
+        $newbotlabel = self::bot_label_from_params($params);
+        if ($newbotlabel !== '') {
+            $oldbotlabel = isset($config->bot_label) ? (string)$config->bot_label : '';
+            if ($newbotlabel !== $oldbotlabel) {
+                $config->bot_label = $newbotlabel;
                 $changed = true;
             }
         }
@@ -347,6 +489,40 @@ class inbound_dispatcher {
     }
 
     /**
+     * Build a readable tutor label from optional backend action params.
+     *
+     * The canonical source for dropdown names remains the live tutor list, but
+     * storing this label avoids showing a raw UUID if that list is temporarily
+     * unavailable or filtered before the next form render.
+     *
+     * @param array $params
+     * @return string
+     */
+    private static function bot_label_from_params(array $params): string {
+        $visualname = self::string_param_any($params, [
+            'bot_visual_name', 'botVisualName', 'visual_name', 'visualName', 'display_name', 'displayName',
+        ]);
+        $internalname = self::string_param_any($params, [
+            'bot_name', 'botName', 'name', 'internal_name', 'internalName',
+        ]);
+        $type = self::string_param_any($params, [
+            'bot_type', 'botType', 'type', 'agent_type', 'agentType',
+        ]);
+
+        $parts = [];
+        if ($visualname !== '') {
+            $parts[] = $visualname;
+        }
+        if ($internalname !== '' && $internalname !== $visualname) {
+            $parts[] = $internalname;
+        }
+        if ($type !== '') {
+            $parts[] = ucwords(str_replace(['_', '-'], ' ', $type));
+        }
+        return clean_param(implode(' · ', $parts), PARAM_TEXT);
+    }
+
+    /**
      * Delete a placement by its UUID.
      *
      * @param array $params
@@ -412,6 +588,10 @@ class inbound_dispatcher {
         // backend's response immediately gives the portal a stable handle.
         $configdata = new \stdClass();
         $configdata->botid = $botid;
+        $botlabel = self::bot_label_from_params($params);
+        if ($botlabel !== '') {
+            $configdata->bot_label = $botlabel;
+        }
         $configdata->placement_uuid = crypto::uuid_v4();
         $configdata->remote_managed = 1;
 
@@ -723,6 +903,100 @@ class inbound_dispatcher {
             return $params[$camel];
         }
         return null;
+    }
+
+    /**
+     * Return the first non-empty string value found under any of the given keys.
+     *
+     * @param array $params
+     * @param array $keys
+     * @return string
+     */
+    private static function string_param_any(array $params, array $keys): string {
+        foreach ($keys as $key) {
+            if (isset($params[$key]) && is_scalar($params[$key]) && (string)$params[$key] !== '') {
+                return clean_param((string)$params[$key], PARAM_TEXT);
+            }
+        }
+        return '';
+    }
+
+    /**
+     * Accept canonical action names and lifecycle aliases from the portal.
+     *
+     * @param array $body
+     * @return string
+     */
+    private static function normalise_action(array $body): string {
+        $raw = '';
+        foreach (['action', 'event_type', 'event'] as $key) {
+            if (isset($body[$key]) && is_string($body[$key])) {
+                $raw = strtolower(trim($body[$key]));
+                break;
+            }
+        }
+
+        switch ($raw) {
+            case 'pause':
+            case 'paused':
+            case 'site.paused':
+                return 'pause_site';
+            case 'resume':
+            case 'resumed':
+            case 'site.resumed':
+                return 'resume_site';
+            case 'disconnect':
+            case 'disconnected':
+            case 'site.disconnected':
+                return 'disconnect_site';
+            default:
+                return $raw;
+        }
+    }
+
+    /**
+     * Drop queued lifecycle events superseded by an inbound portal action.
+     *
+     * @param string $eventtype
+     * @return void
+     */
+    private static function drop_queued_lifecycle_event(string $eventtype): void {
+        global $DB;
+
+        try {
+            $rows = $DB->get_records('block_alphabees_retryqueue', [
+                'endpoint' => site_registry::path_lifecycle(),
+            ]);
+            foreach ($rows as $row) {
+                $payload = json_decode((string)$row->payload, true);
+                if (is_array($payload)
+                    && isset($payload['event_type'])
+                    && (string)$payload['event_type'] === $eventtype) {
+                    $DB->delete_records('block_alphabees_retryqueue', ['id' => $row->id]);
+                }
+            }
+        } catch (\Throwable $e) {
+            debugging('[block_alphabees] inbound resume queue cleanup failed: ' . $e->getMessage(), DEBUG_DEVELOPER);
+        }
+    }
+
+    /**
+     * Interpret inbound boolean-like params consistently.
+     *
+     * @param mixed $value
+     * @return bool
+     */
+    private static function truthy($value): bool {
+        if (is_bool($value)) {
+            return $value;
+        }
+        if (is_int($value)) {
+            return $value === 1;
+        }
+        if (is_string($value)) {
+            return in_array(strtolower($value), ['1', 'true', 'yes', 'on'], true);
+        }
+        return false;
     }
 
     // Response helpers.

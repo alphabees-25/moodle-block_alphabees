@@ -54,21 +54,21 @@ class mobile {
                   : (isset($args->instanceid) ? (int)$args->instanceid : 0);
         $courseid = isset($args->courseid) ? (int)$args->courseid : 0;
 
-        // Support either setting key; prefer 'apikey'.
-        $apikey = get_config('block_alphabees', 'apikey')
-               ?: get_config('block_alphabees', 'mobile_apikey')
-               ?: '';
+        $apikey = get_config('block_alphabees', 'apikey') ?: '';
 
-        // 1) Try to get botid from the specific block instance (most reliable).
-        $botid = '';
+        // 1) Try to get placement config from the specific block instance (most reliable).
+        $placementconfig = new \stdClass();
         if ($blockid) {
-            $botid = self::botid_for_block($blockid);
+            $placementconfig = self::config_for_block($blockid);
         }
 
         // 2) Fallback: first Alphabees block placed in this course.
-        if (!$botid && $courseid) {
-            $botid = self::botid_for_course($courseid);
+        if (empty($placementconfig->botid) && $courseid) {
+            $placementconfig = self::config_for_course($courseid);
         }
+        $botid = !empty($placementconfig->botid) ? (string)$placementconfig->botid : '';
+        $placementuuid = !empty($placementconfig->placement_uuid) ? (string)$placementconfig->placement_uuid : '';
+        $primarycolor = self::resolve_primary_color($placementconfig);
 
         // Determine section number from args when available; default to 0.
         $sectionnum = isset($args->section) ? (int)$args->section : 0;
@@ -94,6 +94,9 @@ class mobile {
             'userid'     => $userid,
             'sectionnum' => $sectionnum,
             'sectionid'  => $sectionid,
+            'placementuuid'  => $placementuuid,
+            'siteidentifier' => \block_alphabees\local\site_registry::site_identifier(),
+            'primarycolor'   => $primarycolor,
         ]);
 
         // Inline the app JS (avoids MIME type / 404 issues from the dev server).
@@ -106,47 +109,47 @@ class mobile {
     }
 
     /**
-     * Resolve the configured bot ID for a specific block instance.
+     * Resolve the configured placement data for a specific block instance.
      *
      * @param int $blockid Block instance ID.
-     * @return string Bot ID or empty string.
+     * @return \stdClass Placement config.
      */
-    private static function botid_for_block(int $blockid): string {
+    private static function config_for_block(int $blockid): \stdClass {
         $instance = \block_instance_by_id($blockid);
         if (!$instance) {
-            return '';
+            return new \stdClass();
         }
 
         // Newer Moodle gives ->config as stdClass; be defensive anyway.
         if (!empty($instance->config) && is_object($instance->config)) {
-            return $instance->config->botid ?? '';
+            return $instance->config;
         }
 
         // Extremely defensive fallback if config were serialized (unlikely here).
         if (!empty($instance->config) && is_string($instance->config)) {
             $decoded = @unserialize($instance->config);
             if (is_object($decoded)) {
-                return $decoded->botid ?? '';
+                return $decoded;
             }
         }
-        return '';
+        return new \stdClass();
     }
 
     /**
-     * Find the first Alphabees block in a course and return its bot ID.
+     * Find the first Alphabees block in a course and return its config.
      *
      * @param int $courseid Course ID.
-     * @return string Bot ID or empty string.
+     * @return \stdClass Placement config.
      */
-    private static function botid_for_course(int $courseid): string {
+    private static function config_for_course(int $courseid): \stdClass {
         global $DB;
         if (!$courseid) {
-            return '';
+            return new \stdClass();
         }
 
         $ctx = \context_course::instance($courseid, IGNORE_MISSING, false);
         if (!$ctx) {
-            return '';
+            return new \stdClass();
         }
 
         // Pick the first block instance by ID (stable and simple).
@@ -159,11 +162,24 @@ class mobile {
             1
         );
         if (!$recs) {
-            return '';
+            return new \stdClass();
         }
         $rec = reset($recs);
 
         $cfg = @unserialize(base64_decode($rec->configdata ?: ''));
-        return is_object($cfg) ? ($cfg->botid ?? '') : '';
+        return is_object($cfg) ? $cfg : new \stdClass();
+    }
+
+    /**
+     * Resolve the widget color from local placement config only.
+     *
+     * @param \stdClass $config Placement config.
+     * @return string Hex color.
+     */
+    private static function resolve_primary_color(\stdClass $config): string {
+        $color = isset($config->primary_color_override)
+            ? clean_param((string)$config->primary_color_override, PARAM_TEXT)
+            : '';
+        return preg_match('/^#[0-9a-fA-F]{6}$/', $color) ? strtolower($color) : '#72aecf';
     }
 }

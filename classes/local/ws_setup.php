@@ -47,6 +47,9 @@ class ws_setup {
     /** Shortname of the external service we pre-declare in db/services.php. */
     public const SERVICE_SHORTNAME = 'block_alphabees';
 
+    /** Display name of the external service declared in db/services.php. */
+    public const SERVICE_NAME = 'Alphabees AI Tutor';
+
     /** Username of the dedicated service user. */
     public const SERVICE_USERNAME = 'alphabees-service';
 
@@ -55,6 +58,9 @@ class ws_setup {
 
     /** Capability granted by the role. */
     public const SERVICE_CAPABILITY = 'block/alphabees:usewebservice';
+
+    /** Component name used for config_plugins diagnostics. */
+    private const COMPONENT = 'block_alphabees';
 
     /**
      * Run the full setup chain.
@@ -70,6 +76,7 @@ class ws_setup {
         require_once($CFG->dirroot . '/lib/externallib.php');
         require_once($CFG->dirroot . '/webservice/lib.php');
         require_once($CFG->dirroot . '/user/lib.php');
+        require_once($CFG->dirroot . '/lib/accesslib.php');
 
         self::enable_webservices_globally();
         self::enable_rest_protocol();
@@ -77,7 +84,9 @@ class ws_setup {
         $userid = self::ensure_service_user();
         self::ensure_role_and_assignment($userid);
         self::ensure_authorised_user($serviceid, $userid);
-        return self::ensure_token($serviceid, $userid);
+        $token = self::ensure_token($serviceid, $userid);
+        self::self_test_token($token);
+        return $token;
     }
 
     /**
@@ -171,6 +180,54 @@ class ws_setup {
     }
 
     /**
+     * Return persisted web-services diagnostics for the settings status panel.
+     *
+     * @return array
+     */
+    public static function diagnostics(): array {
+        $missing = get_config(self::COMPONENT, 'ws_selftest_missing_functions');
+        $missingfunctions = [];
+        if (!empty($missing)) {
+            $decoded = json_decode((string)$missing, true);
+            $missingfunctions = is_array($decoded) ? array_values(array_map('strval', $decoded)) : [];
+        }
+        return [
+            'selftest_status' => (string)(get_config(self::COMPONENT, 'ws_selftest_status') ?: 'never'),
+            'selftest_at' => (int)(get_config(self::COMPONENT, 'ws_selftest_at') ?: 0),
+            'selftest_error' => (string)(get_config(self::COMPONENT, 'ws_selftest_error') ?: ''),
+            'selftest_function_count' => (int)(get_config(self::COMPONENT, 'ws_selftest_function_count') ?: 0),
+            'selftest_missing_functions' => $missingfunctions,
+            'post_status' => (string)(get_config(self::COMPONENT, 'ws_token_post_status') ?: 'never'),
+            'post_at' => (int)(get_config(self::COMPONENT, 'ws_token_post_at') ?: 0),
+            'post_error' => (string)(get_config(self::COMPONENT, 'ws_token_post_error') ?: ''),
+            'post_httpcode' => (int)(get_config(self::COMPONENT, 'ws_token_post_httpcode') ?: 0),
+        ];
+    }
+
+    /**
+     * Record the backend token-post state for visible diagnostics.
+     *
+     * @param string $status
+     * @param string|null $error
+     * @param int $httpcode
+     * @return void
+     */
+    public static function record_token_post_status(
+        string $status,
+        ?string $error = null,
+        int $httpcode = 0
+    ): void {
+        set_config('ws_token_post_status', $status, self::COMPONENT);
+        set_config('ws_token_post_at', (string)time(), self::COMPONENT);
+        set_config('ws_token_post_httpcode', (string)$httpcode, self::COMPONENT);
+        if ($error === null || $error === '') {
+            unset_config('ws_token_post_error', self::COMPONENT);
+        } else {
+            set_config('ws_token_post_error', substr($error, 0, 500), self::COMPONENT);
+        }
+    }
+
+    /**
      * Enable site-wide web-services flag if it isn't already.
      *
      * @return void
@@ -206,9 +263,8 @@ class ws_setup {
      *
      *   1. Admin manually deleted the row → ensure_service inserts a fresh
      *      one but without function links.
-     *   2. Older plugin version installed first, function list expanded
-     *      later, admin never ran admin/upgrade.php → table reflects the
-     *      stale function list.
+     *   2. Admin manually edited the service and removed functions while
+     *      leaving the service/token otherwise active.
      *
      * Calling external_update_descriptions() here is cheap, idempotent,
      * and self-heals both modes — the function list is always brought up
@@ -229,7 +285,7 @@ class ws_setup {
                 // "Alphabees AI Tutor" instead of bare "Alphabees" avoids
                 // the unique-name collision against legacy manually-created
                 // services on existing customer sites.
-                'name' => 'Alphabees AI Tutor',
+                'name' => self::SERVICE_NAME,
                 'shortname' => self::SERVICE_SHORTNAME,
                 'enabled' => 1,
                 'restrictedusers' => 1,
@@ -244,12 +300,212 @@ class ws_setup {
             $DB->set_field('external_services', 'enabled', 1, ['id' => $existing->id]);
         }
 
-        // Re-sync function list from db/services.php so any functions added
-        // in a later plugin version land in external_services_functions
-        // without requiring a separate admin/upgrade.php run.
+        // Re-sync function list from db/services.php and then explicitly
+        // repair the service/function links below. This keeps the runtime
+        // service aligned with the plugin even if the Moodle UI was used to
+        // alter the service manually.
         external_update_descriptions('block_alphabees');
 
-        return (int)$DB->get_field('external_services', 'id', ['shortname' => self::SERVICE_SHORTNAME]);
+        $serviceid = (int)$DB->get_field('external_services', 'id', ['shortname' => self::SERVICE_SHORTNAME]);
+        self::ensure_service_functions($serviceid);
+        return $serviceid;
+    }
+
+    /**
+     * Return the function list declared for the Alphabees external service.
+     *
+     * The display-name key changed from the legacy manual "Alphabees" service
+     * to "Alphabees AI Tutor" to avoid name collisions. Match by shortname so
+     * UI and setup logic do not drift when that label changes again.
+     *
+     * @return array
+     */
+    public static function declared_service_functions(): array {
+        global $CFG;
+        $services = [];
+        require($CFG->dirroot . '/blocks/alphabees/db/services.php');
+        foreach ($services as $service) {
+            if (($service['shortname'] ?? '') === self::SERVICE_SHORTNAME) {
+                return array_values($service['functions'] ?? []);
+            }
+        }
+        return [];
+    }
+
+    /**
+     * Split declared functions into Moodle-exposed and unavailable functions.
+     *
+     * Moodle's external function set differs between supported Moodle minors
+     * and enabled activity plugins. Missing functions should reduce the granted
+     * service surface, not break Connect entirely.
+     *
+     * @return array Tuple: [available functions, skipped functions].
+     */
+    private static function partition_declared_service_functions(): array {
+        global $DB;
+        $available = [];
+        $skipped = [];
+        foreach (self::declared_service_functions() as $functionname) {
+            if ($DB->record_exists('external_functions', ['name' => $functionname])) {
+                $available[] = $functionname;
+            } else {
+                $skipped[] = $functionname;
+            }
+        }
+        return [$available, $skipped];
+    }
+
+    /**
+     * Verify that the freshly-created token can call Moodle's own site-info WS.
+     *
+     * This catches the exact failure mode where a token exists and Moodle
+     * returns HTTP 200, but the token is bound to the wrong/under-provisioned
+     * service or the service user is not actually authorised. We validate the
+     * real REST surface because that is what the Alphabees backend calls.
+     *
+     * @param string $token
+     * @return void
+     * @throws \moodle_exception
+     */
+    public static function self_test_token(string $token): void {
+        global $CFG;
+        require_once($CFG->libdir . '/filelib.php');
+
+        // Only functions exposed by this Moodle are required in the token self-test.
+        $servicefunctions = self::partition_declared_service_functions();
+        $requiredfunctions = $servicefunctions[0];
+        $url = rtrim((string)$CFG->wwwroot, '/') . '/webservice/rest/server.php';
+        $params = [
+            'wstoken' => $token,
+            'wsfunction' => 'core_webservice_get_site_info',
+            'moodlewsrestformat' => 'json',
+        ];
+
+        $curl = new \curl(['timeout' => 15]);
+        $rawresponse = $curl->get($url, $params);
+        $httpcode = (int)($curl->info['http_code'] ?? 0);
+        $errno = $curl->get_errno();
+
+        if ($errno !== 0 || $httpcode !== 200) {
+            $error = $curl->error ?: ('HTTP ' . $httpcode);
+            self::record_self_test(false, 'transport_error: ' . $error, [], 0);
+            throw new \moodle_exception('ws_selftest_failed', 'block_alphabees', '', $error);
+        }
+
+        $decoded = json_decode((string)$rawresponse, true);
+        if (!is_array($decoded)) {
+            self::record_self_test(false, 'invalid_json_response', [], 0);
+            throw new \moodle_exception('ws_selftest_failed', 'block_alphabees', '', 'invalid_json_response');
+        }
+
+        if (isset($decoded['exception'])) {
+            $errorcode = (string)($decoded['errorcode'] ?? 'unknown');
+            $message = (string)($decoded['message'] ?? $decoded['exception']);
+            $error = $errorcode . ': ' . $message;
+            self::record_self_test(false, $error, [], 0);
+            throw new \moodle_exception('ws_selftest_failed', 'block_alphabees', '', $error);
+        }
+
+        $available = self::extract_site_info_function_names($decoded);
+        if (empty($available)) {
+            self::record_self_test(false, 'site_info_missing_functions', [], 0);
+            throw new \moodle_exception('ws_selftest_failed', 'block_alphabees', '', 'site_info_missing_functions');
+        }
+
+        $missing = array_values(array_diff($requiredfunctions, $available));
+        if (!empty($missing)) {
+            $error = get_string('ws_selftest_missing_functions', 'block_alphabees', implode(', ', $missing));
+            self::record_self_test(false, $error, $missing, count($available));
+            throw new \moodle_exception('ws_selftest_failed', 'block_alphabees', '', $error);
+        }
+
+        self::record_self_test(true, null, [], count($available));
+    }
+
+    /**
+     * Extract function names from core_webservice_get_site_info output.
+     *
+     * @param array $siteinfo
+     * @return array
+     */
+    private static function extract_site_info_function_names(array $siteinfo): array {
+        $names = [];
+        foreach (($siteinfo['functions'] ?? []) as $function) {
+            if (is_array($function) && isset($function['name'])) {
+                $names[] = (string)$function['name'];
+            } else if (is_object($function) && isset($function->name)) {
+                $names[] = (string)$function->name;
+            } else if (is_string($function)) {
+                $names[] = $function;
+            }
+        }
+        return array_values(array_unique($names));
+    }
+
+    /**
+     * Persist self-test diagnostics for the settings status panel.
+     *
+     * @param bool $ok
+     * @param string|null $error
+     * @param array $missingfunctions
+     * @param int $functioncount
+     * @return void
+     */
+    private static function record_self_test(
+        bool $ok,
+        ?string $error,
+        array $missingfunctions,
+        int $functioncount
+    ): void {
+        set_config('ws_selftest_status', $ok ? 'passed' : 'failed', self::COMPONENT);
+        set_config('ws_selftest_at', (string)time(), self::COMPONENT);
+        set_config('ws_selftest_function_count', (string)$functioncount, self::COMPONENT);
+        set_config('ws_selftest_missing_functions', json_encode(array_values($missingfunctions)), self::COMPONENT);
+        if ($error === null || $error === '') {
+            unset_config('ws_selftest_error', self::COMPONENT);
+        } else {
+            set_config('ws_selftest_error', substr($error, 0, 500), self::COMPONENT);
+        }
+    }
+
+    /**
+     * Ensure every available declared function is linked to the external service.
+     *
+     * external_update_descriptions() should normally do this, but customer
+     * sites with manually edited service rows or interrupted setup runs can
+     * still end up with an enabled token whose service is missing functions.
+     * Repair those links explicitly. Functions not exposed by this Moodle
+     * version or plugin set are removed from the service instead of failing the
+     * Connect flow.
+     *
+     * @param int $serviceid
+     * @return void
+     */
+    private static function ensure_service_functions(int $serviceid): void {
+        global $DB;
+        [$availablefunctions, $skippedfunctions] = self::partition_declared_service_functions();
+
+        if (!empty($skippedfunctions)) {
+            [$insql, $params] = $DB->get_in_or_equal($skippedfunctions, SQL_PARAMS_QM);
+            $DB->delete_records_select(
+                'external_services_functions',
+                'externalserviceid = ? AND functionname ' . $insql,
+                array_merge([$serviceid], $params)
+            );
+        }
+
+        foreach ($availablefunctions as $functionname) {
+            if ($DB->record_exists('external_services_functions', [
+                'externalserviceid' => $serviceid,
+                'functionname' => $functionname,
+            ])) {
+                continue;
+            }
+            $DB->insert_record('external_services_functions', (object)[
+                'externalserviceid' => $serviceid,
+                'functionname' => $functionname,
+            ]);
+        }
     }
 
     /**
@@ -346,14 +602,9 @@ class ws_setup {
             set_role_contextlevels($roleid, [CONTEXT_SYSTEM]);
         } else {
             $roleid = (int)$role->id;
+            set_role_contextlevels($roleid, [CONTEXT_SYSTEM]);
         }
-        if (!$DB->record_exists('role_capabilities', [
-            'roleid' => $roleid,
-            'capability' => self::SERVICE_CAPABILITY,
-            'contextid' => $syscontext->id,
-        ])) {
-            assign_capability(self::SERVICE_CAPABILITY, CAP_ALLOW, $roleid, $syscontext->id, true);
-        }
+        assign_capability(self::SERVICE_CAPABILITY, CAP_ALLOW, $roleid, $syscontext->id, true);
         if (!$DB->record_exists('role_assignments', [
             'roleid' => $roleid,
             'userid' => $userid,

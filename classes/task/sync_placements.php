@@ -50,8 +50,16 @@ class sync_placements extends \core\task\scheduled_task {
      * @return void
      */
     public function execute(): void {
+        if (site_registry::is_registration_blocked()) {
+            mtrace('[block_alphabees] sync_placements: registration blocked for current API key, skipping.');
+            return;
+        }
         if (!site_registry::is_registered()) {
             mtrace('[block_alphabees] sync_placements: site not yet registered, skipping.');
+            return;
+        }
+        if (site_registry::is_sync_paused()) {
+            mtrace('[block_alphabees] sync_placements: sync paused by portal, skipping.');
             return;
         }
 
@@ -77,10 +85,20 @@ class sync_placements extends \core\task\scheduled_task {
         }
 
         if ($result['status'] === backend_client::STATUS_TRANSIENT) {
-            mtrace('[block_alphabees] sync_placements: transient failure, will retry next run.');
+            if (!empty($result['ignored']) && ($result['health_status'] ?? null) === 'paused') {
+                site_registry::pause_syncs((string)($result['error'] ?? 'site_paused'));
+            }
+            mtrace('[block_alphabees] sync_placements: transient failure, will retry next run. '
+                . ($result['code'] ?? ($result['error'] ?? '')));
             return;
         }
 
-        mtrace('[block_alphabees] sync_placements: permanent failure http=' . $result['httpcode']);
+        $httpcode = (int)$result['httpcode'];
+        $error = $result['error'] ?? 'unknown';
+        if (backend_client::requires_reconnect($result)) {
+            site_registry::reset_registration();
+        }
+        mtrace('[block_alphabees] sync_placements: permanent failure http='
+            . $httpcode . ' err=' . $error);
     }
 }

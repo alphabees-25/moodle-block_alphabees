@@ -25,13 +25,14 @@
 namespace block_alphabees\task;
 
 use block_alphabees\local\backend_client;
+use block_alphabees\local\connection_manager;
 use block_alphabees\local\crypto;
 use block_alphabees\local\site_registry;
 
 /**
  * register_site task.
  *
- * Runs once after API key is saved (or after a manual reset). Sends:
+ * Runs when an admin explicitly connects this site. Sends:
  *   - apiKey, siteIdentifier, siteUrl, siteName, adminEmail
  *   - moodleVersion, pluginVersion, language
  *   - publicKey, keyId
@@ -58,10 +59,17 @@ class register_site extends \core\task\adhoc_task {
      */
     public function execute(): void {
         global $CFG, $SITE;
-
         $apikey = get_config('block_alphabees', 'apikey');
         if (empty($apikey)) {
             mtrace('[block_alphabees] register_site: no apikey configured, skipping.');
+            return;
+        }
+        if (site_registry::is_portal_disconnected()) {
+            mtrace('[block_alphabees] register_site: site was disconnected by portal, skipping.');
+            return;
+        }
+        if (site_registry::is_registration_blocked()) {
+            mtrace('[block_alphabees] register_site: registration blocked for current API key, skipping.');
             return;
         }
 
@@ -84,7 +92,7 @@ class register_site extends \core\task\adhoc_task {
         $result = backend_client::post(site_registry::path_register(), $payload);
 
         if ($result['status'] === backend_client::STATUS_OK) {
-            $response = $result['response'] ?? [];
+            $response = $result['payload'] ?? ($result['response'] ?? []);
             // Accept both snake_case (Pydantic default) and camelCase (VM-mapper
             // convention) so we work against either backend serializer.
             $backendpubb64 = '';
@@ -122,9 +130,28 @@ class register_site extends \core\task\adhoc_task {
                 throw new \moodle_exception('registrationfailed', 'block_alphabees');
             }
             site_registry::set_backend_public_key($rawpub);
+            if (!empty($response['registration_id'])) {
+                site_registry::set_registration_id((string)$response['registration_id']);
+            }
+            if (isset($response['backend_key_id']) && is_numeric($response['backend_key_id'])) {
+                site_registry::set_backend_key_id((int)$response['backend_key_id']);
+            } else if (isset($response['backendKeyId']) && is_numeric($response['backendKeyId'])) {
+                site_registry::set_backend_key_id((int)$response['backendKeyId']);
+            }
             site_registry::mark_registered();
             site_registry::record_register_attempt(null);
             mtrace('[block_alphabees] register_site: registered successfully');
+
+            // Once registration succeeds, enable the default integration
+            // toggles and web-services setup so the explicit Connect action
+            // leaves the site fully usable.
+            try {
+                connection_manager::activate_defaults();
+                mtrace('[block_alphabees] register_site: default integrations enabled.');
+            } catch (\Throwable $e) {
+                mtrace('[block_alphabees] register_site: default integration setup failed: '
+                    . $e->getMessage());
+            }
 
             // Initial backfill: push every existing block placement to the
             // backend so the portal sees the full state immediately, instead
@@ -150,10 +177,15 @@ class register_site extends \core\task\adhoc_task {
             throw new \moodle_exception('registrationtransient', 'block_alphabees');
         }
 
-        // Permanent error (4xx). Don't retry — admin needs to fix something.
+        // Permanent error (4xx). Don't retry. Only a structured register
+        // response with api_key_rejected=true means the API key itself should
+        // be latched locally as rejected.
         $msg = 'Backend rejected request: http=' . $result['httpcode']
             . ' err=' . ($result['error'] ?? 'unknown');
         site_registry::record_register_attempt($msg);
+        if (($result['action'] ?? null) === 'register' && !empty($result['api_key_rejected'])) {
+            site_registry::mark_registration_blocked($msg, (int)$result['httpcode']);
+        }
         mtrace('[block_alphabees] register_site: permanent failure, abandoning. ' . $msg);
     }
 

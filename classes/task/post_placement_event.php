@@ -39,6 +39,7 @@
 namespace block_alphabees\task;
 
 use block_alphabees\local\backend_client;
+use block_alphabees\local\site_registry;
 
 /**
  * Ad-hoc task that posts a single placement lifecycle event to the backend.
@@ -60,6 +61,15 @@ class post_placement_event extends \core\task\adhoc_task {
      * @return void
      */
     public function execute(): void {
+        if (site_registry::is_registration_blocked() || !site_registry::is_registered()) {
+            mtrace('[block_alphabees] post_placement_event: site is not registered or registration is blocked; skipping.');
+            return;
+        }
+        if (site_registry::is_sync_paused()) {
+            mtrace('[block_alphabees] post_placement_event: sync paused by portal, skipping.');
+            return;
+        }
+
         $data = $this->get_custom_data();
         if (!is_object($data)) {
             return;
@@ -73,16 +83,24 @@ class post_placement_event extends \core\task\adhoc_task {
         $result = backend_client::post($path, $payload);
 
         if ($result['status'] === backend_client::STATUS_TRANSIENT) {
+            if (!empty($result['ignored']) && ($result['health_status'] ?? null) === 'paused') {
+                site_registry::pause_syncs((string)($result['error'] ?? 'site_paused'));
+            }
             mtrace('[block_alphabees] post_placement_event: transient failure (will retry): '
                 . ($result['error'] ?? ''));
             throw new \moodle_exception('eventpost_transient', 'block_alphabees');
         }
 
         if ($result['status'] === backend_client::STATUS_ERROR) {
+            $httpcode = (int)($result['httpcode'] ?? 0);
+            $error = $result['error'] ?? 'unknown';
+            if (backend_client::requires_reconnect($result)) {
+                site_registry::reset_registration();
+            }
             // 4xx — backend rejected the event. Log + drop; the hourly
             // sync_placements heartbeat will reconcile state eventually.
             mtrace('[block_alphabees] post_placement_event: permanent failure http='
-                . $result['httpcode'] . ' err=' . ($result['error'] ?? 'unknown'));
+                . $httpcode . ' err=' . $error);
         }
     }
 }

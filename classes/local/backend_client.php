@@ -58,23 +58,13 @@ class backend_client {
         $secretkey = site_registry::secret_key();
         $publickey = site_registry::public_key();
         if ($secretkey === null || $publickey === null) {
-            return [
-                'status' => self::STATUS_ERROR,
-                'httpcode' => 0,
-                'response' => null,
-                'error' => 'no_keypair',
-            ];
+            return self::result(self::STATUS_ERROR, 0, null, null, 'no_keypair');
         }
 
         $url = site_registry::backend_url() . $path;
         $body = json_encode($payload, JSON_UNESCAPED_SLASHES);
         if ($body === false) {
-            return [
-                'status' => self::STATUS_ERROR,
-                'httpcode' => 0,
-                'response' => null,
-                'error' => 'json_encode_failed',
-            ];
+            return self::result(self::STATUS_ERROR, 0, null, null, 'json_encode_failed');
         }
 
         $timestamp = time();
@@ -92,41 +82,10 @@ class backend_client {
             $publickey
         );
 
-        // Dev-only diagnostic: dump everything the verify-side needs to diff.
-        // Hex forms are included alongside base64url so the backend team
-        // can compare bytes 1:1 with their decoded values. Explicit byte
-        // lengths so we don't have to count manually.
-        if (defined('DEBUG_DEVELOPER') && debugging('', DEBUG_DEVELOPER)) {
-            $sigraw = crypto::base64url_decode($signature);
-            $pubb64 = crypto::base64url_encode($publickey);
-            debugging(
-                "[block_alphabees] outbound POST {$path} | canonical lines:\n"
-                    . "  method:    POST\n"
-                    . "  path:      {$path}\n"
-                    . "  timestamp: {$timestamp}\n"
-                    . "  nonce:     {$nonce}    (b64_len=" . strlen($nonce) . ")\n"
-                    . "  body_sha:  " . hash('sha256', $body) . "\n"
-                    . "  site:      {$siteid}\n"
-                    . "  ---\n"
-                    . "  pub_b64u:  {$pubb64}    (b64_len=" . strlen($pubb64) . ")\n"
-                    . "  pub_raw:   " . bin2hex($publickey) . "    (raw_len=" . strlen($publickey) . ")\n"
-                    . "  sig_b64u:  {$signature}    (b64_len=" . strlen($signature) . ")\n"
-                    . "  sig_raw:   " . bin2hex($sigraw) . "    (raw_len=" . strlen($sigraw) . ")\n"
-                    . "  body_len:  " . strlen($body) . " bytes\n"
-                    . "  local_verify: " . ($localverify ? 'PASS' : 'FAIL'),
-                DEBUG_DEVELOPER
-            );
-        }
-
         if (!$localverify) {
             // Plugin keypair is broken — refuse to send so we don't trigger
             // a useless 401 that masks the real issue.
-            return [
-                'status' => self::STATUS_ERROR,
-                'httpcode' => 0,
-                'response' => null,
-                'error' => 'local_keypair_inconsistent',
-            ];
+            return self::result(self::STATUS_ERROR, 0, null, null, 'local_keypair_inconsistent');
         }
 
         $headers = [
@@ -154,32 +113,141 @@ class backend_client {
         $errno = $curl->get_errno();
 
         if ($errno !== 0 || $httpcode === 0) {
-            return [
-                'status' => self::STATUS_TRANSIENT,
-                'httpcode' => $httpcode,
-                'response' => null,
-                'error' => $curl->error ?: 'transport_error',
-            ];
+            return self::result(
+                self::STATUS_TRANSIENT,
+                $httpcode,
+                null,
+                null,
+                $curl->error ?: 'transport_error',
+                ['retryable' => true, 'code' => 'transport_error']
+            );
         }
 
         $decoded = json_decode((string)$rawresponse, true);
-        if ($httpcode >= 200 && $httpcode < 300) {
-            return [
-                'status' => self::STATUS_OK,
-                'httpcode' => $httpcode,
-                'response' => is_array($decoded) ? $decoded : null,
-                'error' => null,
-            ];
+        $response = is_array($decoded) ? $decoded : null;
+        $payload = self::normalise_payload($response);
+        $retryable = (bool)($payload['retryable'] ?? false);
+        $ok = (bool)($payload['ok'] ?? ($httpcode >= 200 && $httpcode < 300));
+        $error = $ok ? null : self::extract_error_message($response, $payload);
+
+        if ($ok) {
+            return self::result(self::STATUS_OK, $httpcode, $response, $payload, $error);
         }
 
-        // 5xx → transient (server-side issue, retry); 4xx → error (client-side, don't retry).
-        $status = ($httpcode >= 500) ? self::STATUS_TRANSIENT : self::STATUS_ERROR;
+        // Structured backend responses are the source of truth. Fall back to
+        // 5xx as transient for older/unstructured responses.
+        $status = ($retryable || $httpcode >= 500) ? self::STATUS_TRANSIENT : self::STATUS_ERROR;
+        return self::result($status, $httpcode, $response, $payload, $error);
+    }
+
+    /**
+     * Build the stable result shape consumed by task code.
+     *
+     * @param string $status
+     * @param int $httpcode
+     * @param array|null $response Raw decoded body.
+     * @param array|null $payload Normalised backend payload.
+     * @param string|null $error Fallback error message.
+     * @param array $overrides Normalised field overrides for local errors.
+     * @return array
+     */
+    private static function result(
+        string $status,
+        int $httpcode,
+        ?array $response,
+        ?array $payload,
+        ?string $error,
+        array $overrides = []
+    ): array {
+        $payload = $payload ?? [];
+        $normalised = array_merge([
+            'ok' => $status === self::STATUS_OK,
+            'code' => null,
+            'api_key_rejected' => false,
+            'retryable' => $status === self::STATUS_TRANSIENT,
+            'action' => null,
+            'registration_id' => null,
+            'health_status' => null,
+            'ignored' => false,
+        ], $payload, $overrides);
+
         return [
             'status' => $status,
             'httpcode' => $httpcode,
-            'response' => is_array($decoded) ? $decoded : null,
-            'error' => self::extract_error_message($decoded),
+            'response' => $response,
+            'payload' => $normalised,
+            'error' => $error ?? self::message_from_payload($normalised) ?? ($normalised['code'] ?? null),
+            'ok' => (bool)$normalised['ok'],
+            'code' => $normalised['code'],
+            'api_key_rejected' => (bool)$normalised['api_key_rejected'],
+            'retryable' => (bool)$normalised['retryable'],
+            'action' => $normalised['action'],
+            'registration_id' => $normalised['registration_id'],
+            'health_status' => $normalised['health_status'],
+            'ignored' => (bool)$normalised['ignored'],
         ];
+    }
+
+    /**
+     * Return the backend payload, unwrapping FastAPI HTTPException detail.
+     *
+     * @param array|null $body
+     * @return array
+     */
+    private static function normalise_payload(?array $body): array {
+        if ($body === null) {
+            return [];
+        }
+        if (isset($body['detail']) && is_array($body['detail']) && !self::is_list_array($body['detail'])) {
+            return $body['detail'];
+        }
+        return $body;
+    }
+
+    /**
+     * Polyfill-style list-array check for PHP versions without array_is_list().
+     *
+     * @param array $value
+     * @return bool
+     */
+    private static function is_list_array(array $value): bool {
+        $expected = 0;
+        foreach (array_keys($value) as $key) {
+            if ($key !== $expected) {
+                return false;
+            }
+            $expected++;
+        }
+        return true;
+    }
+
+    /**
+     * Whether a backend response says this local registration must be recreated.
+     *
+     * @param array $result Result returned by post().
+     * @return bool
+     */
+    public static function requires_reconnect(array $result): bool {
+        $code = (string)($result['code'] ?? '');
+        return in_array($code, [
+            'site_disconnected',
+            'site_disconnected_reconnect_required',
+        ], true);
+    }
+
+    /**
+     * Whether a backend response reports a non-retryable registration mismatch.
+     *
+     * @param array $result Result returned by post().
+     * @return bool
+     */
+    public static function is_registration_mismatch(array $result): bool {
+        $code = (string)($result['code'] ?? '');
+        return in_array($code, [
+            'site_identifier_mismatch',
+            'registration_mismatch',
+            'site_url_mismatch',
+        ], true);
     }
 
     /**
@@ -190,9 +258,14 @@ class backend_client {
      *   - { detail: "..." }                           (FastAPI shorthand)
      *   - { detail: [{loc:[...], msg:"..."}, ...] }   (FastAPI Pydantic validation)
      *   - { message: "..." }                          (some intermediaries)
+     *   - structured {code,message,...} payloads
      *   - anything else → null
      */
-    private static function extract_error_message($decoded): ?string {
+    private static function extract_error_message($decoded, ?array $payload = null): ?string {
+        $payloadmessage = self::message_from_payload($payload ?? []);
+        if ($payloadmessage !== null) {
+            return $payloadmessage;
+        }
         if (!is_array($decoded)) {
             return null;
         }
@@ -228,6 +301,26 @@ class backend_client {
     }
 
     /**
+     * Extract a compact message from a structured backend payload.
+     *
+     * @param array $payload
+     * @return string|null
+     */
+    private static function message_from_payload(array $payload): ?string {
+        if (isset($payload['message']) && is_string($payload['message'])) {
+            $message = $payload['message'];
+            if (!empty($payload['code']) && strpos($message, (string)$payload['code']) === false) {
+                return (string)$payload['code'] . ': ' . $message;
+            }
+            return $message;
+        }
+        if (isset($payload['error']) && is_string($payload['error'])) {
+            return $payload['error'];
+        }
+        return null;
+    }
+
+    /**
      * Convenience: POST and on transient failure, queue for retry.
      *
      * Returns the same shape as post(). Never throws.
@@ -247,7 +340,7 @@ class backend_client {
      * @param array $payload
      * @return void
      */
-    public static function queue_retry(string $path, array $payload): void {
+    public static function queue_retry(string $path, array $payload, int $delay = 30): void {
         global $DB;
         $now = time();
         $DB->insert_record('block_alphabees_retryqueue', (object)[
@@ -255,7 +348,7 @@ class backend_client {
             'method' => 'POST',
             'payload' => json_encode($payload, JSON_UNESCAPED_SLASHES),
             'attempts' => 0,
-            'nextattempt' => $now + 30,
+            'nextattempt' => $now + max(0, $delay),
             'lasterror' => null,
             'timecreated' => $now,
         ]);

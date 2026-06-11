@@ -64,10 +64,9 @@ $services = [
             'core_user_get_users_by_field',
             'core_user_get_course_user_profiles',
 
-            // Grades — per-user grade items, course-level overview, raw grades.
+            // Grades — per-user grade items, course-level overview, activity grades.
             'gradereport_user_get_grade_items',
             'gradereport_overview_get_course_grades',
-            'core_grades_get_grades',
             'mod_assign_get_grades',
             'mod_quiz_get_user_attempts',
 

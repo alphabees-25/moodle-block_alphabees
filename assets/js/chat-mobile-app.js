@@ -30,7 +30,7 @@
 
   if (
     document.getElementById("al-chat-widget") &&
-    window.alphabees &&        
+    window.alphabees &&
     window.alphabees.state &&
     window.alphabees.state.isVisible === true
   ) {
@@ -43,6 +43,9 @@
   var USER_ID   = Number(container.getAttribute("data-userid")    || 0) || 0;
   var SECTION_NUM = Number(container.getAttribute("data-sectionnum") || 0) || 0;
   var SECTION_ID  = Number(container.getAttribute("data-sectionid")  || 0) || 0;
+  var PLACEMENT_UUID = container.getAttribute("data-placementuuid") || "";
+  var SITE_IDENTIFIER = container.getAttribute("data-siteidentifier") || "";
+  var PRIMARY_COLOR = container.getAttribute("data-primarycolor") || "#72aecf";
 
   function loadChatBundle() {
     return new Promise(function (resolve) {
@@ -57,6 +60,7 @@
         window._loadAlChat({
           apiKey: API_KEY,
           botId:  BOT_ID,
+          primaryColor: PRIMARY_COLOR,
           platform: "moodle-app",
           chatBubblePositionX: 8,
           chatBubblePositionY: 120,
@@ -65,7 +69,9 @@
             courseId: COURSE_ID,
             sectionNum: SECTION_NUM,
             sectionId: SECTION_ID,
-          }
+          },
+          placementUuid: PLACEMENT_UUID,
+          siteIdentifier: SITE_IDENTIFIER
         });
         resolve(false);
       };
@@ -86,6 +92,7 @@
         data: {
           apiKey: API_KEY,
           botId:  BOT_ID,
+          primaryColor: PRIMARY_COLOR,
           platform: "moodle-app",
           isVisible: true,
           chatBubblePositionX: 8,
@@ -95,7 +102,9 @@
             courseId: COURSE_ID,
             sectionNum: SECTION_NUM,
             sectionId: SECTION_ID,
-          }
+          },
+          placementUuid: PLACEMENT_UUID,
+          siteIdentifier: SITE_IDENTIFIER
         }
       }, "*");
       window.postMessage({ type: "alConnect" }, "*");
@@ -104,4 +113,3 @@
       console.error("[alphabees] mount error:", e);
     });
 })();
-
