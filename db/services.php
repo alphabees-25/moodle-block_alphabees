@@ -57,6 +57,32 @@ $services = [
             'core_course_get_contents',
             'core_course_get_categories',
             'mod_page_get_pages_by_courses',
+
+            // Additional activity read paths — backend can ingest richer
+            // course content when the corresponding Moodle activity plugins
+            // expose these functions on the customer site.
+            'mod_h5pactivity_get_h5pactivities_by_courses',
+            'mod_lesson_get_lessons_by_courses',
+            'mod_lesson_get_pages',
+            'mod_lesson_get_page_data',
+            'mod_lesson_get_pages_possible_jumps',
+            'mod_quiz_get_quizzes_by_courses',
+            'mod_scorm_get_scorms_by_courses',
+            'mod_wiki_get_wikis_by_courses',
+            'mod_wiki_get_subwikis',
+            'mod_wiki_get_pages',
+            'mod_wiki_get_page_contents',
+            'mod_data_get_databases_by_courses',
+            'mod_data_get_fields',
+            'mod_data_get_entries',
+            'mod_data_get_entry',
+            'mod_data_search_entries',
+            'mod_feedback_get_feedbacks_by_courses',
+            'mod_feedback_get_items',
+            'mod_forum_get_forums_by_courses',
+            'mod_forum_get_forum_discussions',
+            'mod_forum_get_discussion_posts',
+
             'core_enrol_get_users_courses',
             'core_enrol_get_enrolled_users',
 

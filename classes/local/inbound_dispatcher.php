@@ -85,6 +85,8 @@ class inbound_dispatcher {
                 return self::action_delete_placement($params);
             case 'create_placement':
                 return self::action_create_placement($params);
+            case 'bulk_create_placements':
+                return self::action_bulk_create_placements($params);
             case 'list_courses':
                 return self::ok(self::action_list_courses($params));
             case 'list_courses_categorized':
@@ -386,6 +388,14 @@ class inbound_dispatcher {
                 unset($config->bot_label);
                 $changed = true;
             }
+            if ($oldbot === ''
+                && (string)$newbot !== ''
+                && self::param($params, 'visible', 'visible') === null
+                && isset($config->placement_visible)
+                && !$config->placement_visible) {
+                $config->placement_visible = 1;
+                $changed = true;
+            }
         }
         $newbotlabel = self::bot_label_from_params($params);
         if ($newbotlabel !== '') {
@@ -546,60 +556,236 @@ class inbound_dispatcher {
     }
 
     /**
-     * Create a new alphabees block instance on a target course page.
+     * Create a new alphabees block instance on a target course or module page.
      *
      * Gated by the `allow_remote_placement` admin setting (off by default) —
      * giving the portal write access to add blocks anywhere is powerful and
      * the site admin must consciously opt in.
      *
-     * Required params: course_id, bot_id.
-     * Optional params: page_pattern (default `course-view-*`),
+     * Required params: course_id or target_type=module + cmid.
+     * Optional params: target_type (default `course`),
+     *                  bot_id,
+     *                  visible,
+     *                  page_pattern (default `course-view-*` or `mod-{modtype}-*`),
      *                  block_region (default `side-pre`),
      *                  block_weight (default 0).
      *
      * Returns the full placement payload (same shape as list_placements rows).
      */
     private static function action_create_placement(array $params): array {
-        global $DB;
-
         if (empty(get_config('block_alphabees', 'allow_remote_placement'))) {
             return self::deny(403, ['error' => 'remote_placement_disabled']);
         }
 
+        try {
+            $result = self::create_placement_for_target($params);
+        } catch (\Throwable $e) {
+            debugging('[block_alphabees] create_placement failed: ' . $e->getMessage(), DEBUG_DEVELOPER);
+            return self::deny(500, ['error' => 'internal', 'detail' => $e->getMessage()]);
+        }
+        if (empty($result['ok'])) {
+            return self::deny((int)($result['status'] ?? 400), $result);
+        }
+
+        return self::ok(['placement' => $result['placement']]);
+    }
+
+    /**
+     * Create multiple placements while reporting each target independently.
+     *
+     * @param array $params
+     * @return array
+     */
+    private static function action_bulk_create_placements(array $params): array {
+        if (empty(get_config('block_alphabees', 'allow_remote_placement'))) {
+            return self::deny(403, ['error' => 'remote_placement_disabled']);
+        }
+
+        $targets = self::param($params, 'targets', 'targets');
+        if (!is_array($targets) || empty($targets)) {
+            return self::deny(400, ['error' => 'missing_targets']);
+        }
+
+        $results = [];
+        foreach ($targets as $index => $target) {
+            if (!is_array($target)) {
+                $results[] = [
+                    'ok' => false,
+                    'index' => $index,
+                    'error' => 'invalid_target',
+                ];
+                continue;
+            }
+
+            try {
+                $result = self::create_placement_for_target($target);
+            } catch (\Throwable $e) {
+                debugging('[block_alphabees] bulk_create_placements target failed: ' . $e->getMessage(), DEBUG_DEVELOPER);
+                $result = [
+                    'ok' => false,
+                    'status' => 500,
+                    'error' => 'internal',
+                    'detail' => $e->getMessage(),
+                ];
+            }
+            $result['index'] = $index;
+            $results[] = $result;
+        }
+
+        $created = 0;
+        foreach ($results as $result) {
+            if (!empty($result['ok'])) {
+                $created++;
+            }
+        }
+
+        return self::ok([
+            'results' => $results,
+            'created_count' => $created,
+            'error_count' => count($results) - $created,
+        ]);
+    }
+
+    /**
+     * Create one block_instances row for either a course or module target.
+     *
+     * @param array $params
+     * @return array
+     */
+    private static function create_placement_for_target(array $params): array {
+        global $DB;
+
+        $targettype = strtolower((string)(self::param($params, 'target_type', 'targetType') ?? 'course'));
+        if ($targettype === 'activity') {
+            $targettype = 'module';
+        }
+        if (!in_array($targettype, ['course', 'module'], true)) {
+            return [
+                'ok' => false,
+                'status' => 400,
+                'target_type' => $targettype,
+                'error' => 'invalid_target_type',
+            ];
+        }
+
+        $botid = clean_param((string)(self::param($params, 'bot_id', 'botId') ?? ''), PARAM_TEXT);
+
         $courseid = (int)(self::param($params, 'course_id', 'courseId') ?? 0);
-        if ($courseid <= 0) {
-            return self::deny(400, ['error' => 'missing_course_id']);
-        }
-        $course = $DB->get_record('course', ['id' => $courseid]);
-        if (!$course) {
-            return self::deny(404, ['error' => 'course_not_found']);
+        $cmid = null;
+        $modtype = null;
+        $activityname = null;
+        if ($targettype === 'module') {
+            $cmid = (int)(self::param($params, 'cmid', 'cmid')
+                ?? self::param($params, 'course_module_id', 'courseModuleId') ?? 0);
+            if ($cmid <= 0) {
+                return [
+                    'ok' => false,
+                    'status' => 400,
+                    'target_type' => 'module',
+                    'course_id' => $courseid > 0 ? $courseid : null,
+                    'error' => 'missing_cmid',
+                ];
+            }
+
+            $sql = "SELECT cm.id, cm.course, cm.instance, m.name AS modtype
+                      FROM {course_modules} cm
+                      JOIN {modules} m ON m.id = cm.module
+                     WHERE cm.id = ?";
+            $cm = $DB->get_record_sql($sql, [$cmid], IGNORE_MISSING);
+            if (!$cm) {
+                return [
+                    'ok' => false,
+                    'status' => 404,
+                    'target_type' => 'module',
+                    'cmid' => $cmid,
+                    'error' => 'module_not_found',
+                ];
+            }
+
+            if ($courseid > 0 && $courseid !== (int)$cm->course) {
+                return [
+                    'ok' => false,
+                    'status' => 400,
+                    'target_type' => 'module',
+                    'course_id' => $courseid,
+                    'cmid' => $cmid,
+                    'error' => 'module_course_mismatch',
+                ];
+            }
+
+            $courseid = (int)$cm->course;
+            $modtype = (string)$cm->modtype;
+            $expectedmodtype = (string)(self::param($params, 'modtype', 'modType') ?? '');
+            if ($expectedmodtype !== '' && $expectedmodtype !== $modtype) {
+                return [
+                    'ok' => false,
+                    'status' => 400,
+                    'target_type' => 'module',
+                    'course_id' => $courseid,
+                    'cmid' => $cmid,
+                    'modtype' => $modtype,
+                    'error' => 'modtype_mismatch',
+                ];
+            }
+
+            try {
+                $activityname = $DB->get_field($modtype, 'name', ['id' => $cm->instance], IGNORE_MISSING);
+                $activityname = $activityname !== false ? (string)$activityname : null;
+            } catch (\Throwable $e) {
+                unset($e);
+                $activityname = null;
+            }
+            $parentcontext = \context_module::instance($cmid);
+        } else {
+            if ($courseid <= 0) {
+                return [
+                    'ok' => false,
+                    'status' => 400,
+                    'target_type' => 'course',
+                    'error' => 'missing_course_id',
+                ];
+            }
+            $course = $DB->get_record('course', ['id' => $courseid], 'id', IGNORE_MISSING);
+            if (!$course) {
+                return [
+                    'ok' => false,
+                    'status' => 404,
+                    'target_type' => 'course',
+                    'course_id' => $courseid,
+                    'error' => 'course_not_found',
+                ];
+            }
+            $parentcontext = \context_course::instance($courseid);
         }
 
-        $botid = (string)(self::param($params, 'bot_id', 'botId') ?? '');
-        if ($botid === '') {
-            return self::deny(400, ['error' => 'missing_bot_id']);
-        }
-
-        $region = (string)(self::param($params, 'block_region', 'blockRegion') ?? 'side-pre');
+        $region = clean_param((string)(self::param($params, 'block_region', 'blockRegion') ?? 'side-pre'), PARAM_TEXT);
         $weight = (int)(self::param($params, 'block_weight', 'blockWeight') ?? 0);
-        $pagepattern = (string)(self::param($params, 'page_pattern', 'pagePattern') ?? 'course-view-*');
+        $defaultpattern = $targettype === 'module' ? 'mod-' . $modtype . '-*' : 'course-view-*';
+        $pagepattern = clean_param(
+            (string)(self::param($params, 'page_pattern', 'pagePattern') ?? $defaultpattern),
+            PARAM_TEXT
+        );
 
-        // Build the instance config blob with a fresh placement_uuid so the
-        // backend's response immediately gives the portal a stable handle.
         $configdata = new \stdClass();
-        $configdata->botid = $botid;
+        if ($botid !== '') {
+            $configdata->botid = $botid;
+        }
         $botlabel = self::bot_label_from_params($params);
-        if ($botlabel !== '') {
+        if ($botid !== '' && $botlabel !== '') {
             $configdata->bot_label = $botlabel;
         }
         $configdata->placement_uuid = crypto::uuid_v4();
         $configdata->remote_managed = 1;
-
-        $coursecontext = \context_course::instance($courseid);
+        $visible = self::param($params, 'visible', 'visible');
+        if ($visible !== null) {
+            $configdata->placement_visible = self::to_bool($visible) ? 1 : 0;
+        } else if ($botid === '') {
+            $configdata->placement_visible = 0;
+        }
 
         $record = new \stdClass();
         $record->blockname = 'alphabees';
-        $record->parentcontextid = $coursecontext->id;
+        $record->parentcontextid = $parentcontext->id;
         $record->showinsubcontexts = 0;
         $record->requiredbytheme = 0;
         $record->pagetypepattern = $pagepattern;
@@ -613,10 +799,29 @@ class inbound_dispatcher {
 
         $instance = $DB->get_record('block_instances', ['id' => $instanceid]);
         if (!$instance) {
-            return self::deny(500, ['error' => 'create_failed']);
+            return [
+                'ok' => false,
+                'status' => 500,
+                'target_type' => $targettype,
+                'course_id' => $courseid,
+                'cmid' => $cmid,
+                'modtype' => $modtype,
+                'activity_name' => $activityname,
+                'error' => 'create_failed',
+            ];
         }
 
-        return self::ok(['placement' => placement_repository::build_payload($instance)]);
+        $placement = placement_repository::build_payload($instance);
+        return [
+            'ok' => true,
+            'target_type' => $targettype,
+            'course_id' => $courseid,
+            'cmid' => $cmid,
+            'modtype' => $modtype,
+            'activity_name' => $activityname,
+            'placement_uuid' => $placement['placement_uuid'] ?? null,
+            'placement' => $placement,
+        ];
     }
 
     /**

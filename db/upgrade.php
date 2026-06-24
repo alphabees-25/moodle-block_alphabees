@@ -122,5 +122,39 @@ function xmldb_block_alphabees_upgrade(int $oldversion): bool {
         upgrade_block_savepoint(true, 2026061100, 'alphabees');
     }
 
+    // 3.0.3: refresh the auto-created Moodle web-service integration on
+    // upgrade. Fresh installs get the service from db/services.php; existing
+    // installs need their already-tokenised service expanded to any newly
+    // declared functions. The helper keeps the current token, skips functions
+    // unavailable on this Moodle version/site, and avoids loopback REST calls
+    // so upgrade cannot fail just because self-test HTTP is blocked.
+    if ($oldversion < 2026062200) {
+        try {
+            $token = \block_alphabees\local\ws_setup::refresh_enabled_integration_for_upgrade();
+            if ($token !== null
+                && \block_alphabees\local\site_registry::is_registered()
+                && !\block_alphabees\local\site_registry::is_registration_blocked()
+                && !\block_alphabees\local\site_registry::is_sync_paused()) {
+                $task = new \block_alphabees\task\post_ws_token();
+                $task->set_custom_data((object)[
+                    'token' => $token,
+                    'service_shortname' => \block_alphabees\local\ws_setup::SERVICE_SHORTNAME,
+                ]);
+                \core\task\manager::queue_adhoc_task($task);
+                \block_alphabees\local\ws_setup::record_token_post_status('queued');
+            }
+        } catch (\Throwable $e) {
+            // Do not block Moodle upgrades for a recoverable integration
+            // refresh. Admins can re-save the WS setting or reconnect to rerun
+            // the same idempotent setup path after the upgrade completes.
+            \block_alphabees\local\ws_setup::record_token_post_status(
+                'error',
+                'upgrade_ws_refresh_failed: ' . $e->getMessage()
+            );
+        }
+
+        upgrade_block_savepoint(true, 2026062200, 'alphabees');
+    }
+
     return true;
 }

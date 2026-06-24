@@ -24,7 +24,6 @@
 define("block_alphabees/config", [], function() {
     "use strict";
 
-    // Configure RequireJS paths and shims for external dependencies.
     if (typeof window.requirejs !== "undefined") {
         var bust = Math.floor(10000 + Math.random() * 90000);
         window.requirejs.config({
@@ -36,5 +35,3 @@ define("block_alphabees/config", [], function() {
 
     return {};
 });
-
-

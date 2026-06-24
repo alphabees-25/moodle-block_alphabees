@@ -43,9 +43,58 @@
   var USER_ID   = Number(container.getAttribute("data-userid")    || 0) || 0;
   var SECTION_NUM = Number(container.getAttribute("data-sectionnum") || 0) || 0;
   var SECTION_ID  = Number(container.getAttribute("data-sectionid")  || 0) || 0;
+  var CONTEXT_ID = Number(container.getAttribute("data-contextid") || 0) || 0;
+  var CONTEXT_LEVEL = Number(container.getAttribute("data-contextlevel") || 0) || 0;
+  var PAGE_TYPE = container.getAttribute("data-pagetype") || "";
+  var PAGE_URL = container.getAttribute("data-pageurl") || "";
+  var CMID = Number(container.getAttribute("data-cmid") || 0) || 0;
+  var MOD_TYPE = container.getAttribute("data-modtype") || "";
+  var ACTIVITY_ID = Number(container.getAttribute("data-activityid") || 0) || 0;
+  var ACTIVITY_NAME = container.getAttribute("data-activityname") || "";
   var PLACEMENT_UUID = container.getAttribute("data-placementuuid") || "";
   var SITE_IDENTIFIER = container.getAttribute("data-siteidentifier") || "";
   var PRIMARY_COLOR = container.getAttribute("data-primarycolor") || "#72aecf";
+
+  function moodleContext() {
+    return {
+      courseId: COURSE_ID,
+      sectionNum: SECTION_NUM,
+      sectionId: SECTION_ID,
+      contextId: CONTEXT_ID,
+      contextLevel: CONTEXT_LEVEL,
+      pageType: PAGE_TYPE,
+      pageUrl: PAGE_URL,
+      cmid: CMID,
+      modType: MOD_TYPE,
+      activityId: ACTIVITY_ID,
+      activityName: ACTIVITY_NAME,
+    };
+  }
+
+  function currentSessionId() {
+    var state = window.alphabees && window.alphabees.state ? window.alphabees.state : null;
+    if (!state) {
+      return "";
+    }
+    return String(state.sessionId || state.session_id || state.conversationId || state.conversation_id || "");
+  }
+
+  function emitMoodleContextEvent(payload, reason) {
+    var eventPayload = {
+      eventType: "moodle.context.changed",
+      reason: reason || "init",
+      occurredAt: new Date().toISOString(),
+      activeSession: !!(window.alphabees && window.alphabees.state),
+      sessionId: currentSessionId(),
+      data: payload
+    };
+    window.postMessage({ type: "alMoodleContextChanged", data: eventPayload }, "*");
+    if (typeof window.CustomEvent === "function") {
+      window.dispatchEvent(new CustomEvent("alphabees:moodle-context-changed", {
+        detail: eventPayload
+      }));
+    }
+  }
 
   function loadChatBundle() {
     return new Promise(function (resolve) {
@@ -57,22 +106,21 @@
       s.src = `https://chat.alphalearn.ai/chat-widget.js?cacheBust=${randomId}`;
 
       s.onload = function () {
-        window._loadAlChat({
+        var initialPayload = {
           apiKey: API_KEY,
           botId:  BOT_ID,
           primaryColor: PRIMARY_COLOR,
+          development: false,
           platform: "moodle-app",
           chatBubblePositionX: 8,
           chatBubblePositionY: 120,
           userId: USER_ID,
-          context: {
-            courseId: COURSE_ID,
-            sectionNum: SECTION_NUM,
-            sectionId: SECTION_ID,
-          },
+          context: moodleContext(),
           placementUuid: PLACEMENT_UUID,
           siteIdentifier: SITE_IDENTIFIER
-        });
+        };
+        window._loadAlChat(initialPayload);
+        emitMoodleContextEvent(initialPayload, "init");
         resolve(false);
       };
       s.onerror = function () {
@@ -87,26 +135,25 @@
     .then(function (alreadyLoaded) {
       // Reconfigure/update state on subsequent navigations as well.
       window.postMessage({ type: "alReset" }, "*");
+      var updatePayload = {
+        apiKey: API_KEY,
+        botId:  BOT_ID,
+        primaryColor: PRIMARY_COLOR,
+        development: false,
+        platform: "moodle-app",
+        isVisible: true,
+        chatBubblePositionX: 8,
+        chatBubblePositionY: 120,
+        userId: USER_ID,
+        context: moodleContext(),
+        placementUuid: PLACEMENT_UUID,
+        siteIdentifier: SITE_IDENTIFIER
+      };
       window.postMessage({
         type: "alUpdateState",
-        data: {
-          apiKey: API_KEY,
-          botId:  BOT_ID,
-          primaryColor: PRIMARY_COLOR,
-          platform: "moodle-app",
-          isVisible: true,
-          chatBubblePositionX: 8,
-          chatBubblePositionY: 120,
-          userId: USER_ID,
-          context: {
-            courseId: COURSE_ID,
-            sectionNum: SECTION_NUM,
-            sectionId: SECTION_ID,
-          },
-          placementUuid: PLACEMENT_UUID,
-          siteIdentifier: SITE_IDENTIFIER
-        }
+        data: updatePayload
       }, "*");
+      emitMoodleContextEvent(updatePayload, "navigation");
       window.postMessage({ type: "alConnect" }, "*");
     })
     .catch(function (e) {

@@ -62,10 +62,19 @@ class placement_repository {
         $courseshortname = null;
         $coursefullname = null;
         $categoryid = null;
+        $targettype = 'unknown';
+        $cmid = null;
+        $modtype = null;
+        $activityname = null;
+        $contextlevel = null;
 
         try {
             $context = \context::instance_by_id((int)$instance->parentcontextid, IGNORE_MISSING);
+            if ($context) {
+                $contextlevel = (int)$context->contextlevel;
+            }
             if ($context instanceof \context_course) {
+                $targettype = 'course';
                 $course = $DB->get_record('course', ['id' => $context->instanceid],
                     'id,shortname,fullname,category', IGNORE_MISSING);
                 if ($course) {
@@ -75,14 +84,25 @@ class placement_repository {
                     $categoryid = (int)$course->category;
                 }
             } else if ($context instanceof \context_module) {
-                $cm = $DB->get_record('course_modules', ['id' => $context->instanceid], 'id,course', IGNORE_MISSING);
+                $targettype = 'module';
+                $sql = "SELECT cm.id, cm.course, cm.instance, m.name AS modtype
+                          FROM {course_modules} cm
+                          JOIN {modules} m ON m.id = cm.module
+                         WHERE cm.id = ?";
+                $cm = $DB->get_record_sql($sql, [$context->instanceid], IGNORE_MISSING);
                 if ($cm) {
+                    $cmid = (int)$cm->id;
+                    $modtype = (string)$cm->modtype;
                     $course = $DB->get_record('course', ['id' => $cm->course], 'id,shortname,fullname,category', IGNORE_MISSING);
                     if ($course) {
                         $courseid = (int)$course->id;
                         $courseshortname = (string)$course->shortname;
                         $coursefullname = (string)$course->fullname;
                         $categoryid = (int)$course->category;
+                    }
+                    if ($modtype !== '') {
+                        $activityname = $DB->get_field($modtype, 'name', ['id' => $cm->instance], IGNORE_MISSING);
+                        $activityname = $activityname !== false ? (string)$activityname : null;
                     }
                 }
             }
@@ -107,7 +127,12 @@ class placement_repository {
             'course_shortname' => $courseshortname,
             'course_fullname' => $coursefullname,
             'category_id' => $categoryid,
-            'page_context_level' => isset($context) ? (int)$context->contextlevel : null,
+            'target_type' => $targettype,
+            'placement_scope' => $targettype,
+            'cmid' => $cmid,
+            'modtype' => $modtype,
+            'activity_name' => $activityname,
+            'page_context_level' => $contextlevel,
             'page_pattern' => isset($instance->pagetypepattern) ? (string)$instance->pagetypepattern : null,
             'sub_page_pattern' => isset($instance->subpagepattern) ? (string)$instance->subpagepattern : null,
             'block_region' => isset($instance->defaultregion) ? (string)$instance->defaultregion : null,

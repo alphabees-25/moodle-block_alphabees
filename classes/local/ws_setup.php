@@ -90,6 +90,37 @@ class ws_setup {
     }
 
     /**
+     * Refresh an already-enabled integration during plugin upgrade.
+     *
+     * This intentionally avoids the REST self-test used by enable(). Moodle
+     * upgrades can run while the site is in maintenance mode or behind hosting
+     * rules that block loopback HTTP, and a local service-definition refresh
+     * must not make the whole plugin upgrade fail.
+     *
+     * @return string|null Existing or newly-created token, or null if WS integration is disabled.
+     */
+    public static function refresh_enabled_integration_for_upgrade(): ?string {
+        global $CFG;
+        if ((string)(get_config(self::COMPONENT, 'ws_enabled') ?: '') !== '1'
+            || site_registry::is_portal_disconnected()) {
+            return null;
+        }
+
+        require_once($CFG->dirroot . '/lib/externallib.php');
+        require_once($CFG->dirroot . '/webservice/lib.php');
+        require_once($CFG->dirroot . '/user/lib.php');
+        require_once($CFG->dirroot . '/lib/accesslib.php');
+
+        self::enable_webservices_globally();
+        self::enable_rest_protocol();
+        $serviceid = self::ensure_service();
+        $userid = self::ensure_service_user();
+        self::ensure_role_and_assignment($userid);
+        self::ensure_authorised_user($serviceid, $userid);
+        return self::ensure_token($serviceid, $userid);
+    }
+
+    /**
      * Tear down the integration: revoke token and remove service-user authorisation.
      *
      * Leaves the service-user account intact (deleting Moodle users is heavy
@@ -304,7 +335,14 @@ class ws_setup {
         // repair the service/function links below. This keeps the runtime
         // service aligned with the plugin even if the Moodle UI was used to
         // alter the service manually.
-        external_update_descriptions('block_alphabees');
+        try {
+            external_update_descriptions('block_alphabees');
+        } catch (\Throwable $e) {
+            debugging(
+                '[block_alphabees] external service description sync skipped: ' . $e->getMessage(),
+                DEBUG_DEVELOPER
+            );
+        }
 
         $serviceid = (int)$DB->get_field('external_services', 'id', ['shortname' => self::SERVICE_SHORTNAME]);
         self::ensure_service_functions($serviceid);

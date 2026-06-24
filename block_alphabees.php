@@ -290,8 +290,16 @@ class block_alphabees extends block_base {
         // Determine section number and section id.
         $sectionnum = 0;
         $sectionid  = 0;
+        $cmid = 0;
+        $modtype = '';
+        $activityid = 0;
+        $activityname = '';
         if (!empty($this->page->cm)) {
             // On activity pages the course module carries both.
+            $cmid = (int)($this->page->cm->id ?? 0);
+            $modtype = clean_param((string)($this->page->cm->modname ?? ''), PARAM_ALPHANUMEXT);
+            $activityid = (int)($this->page->cm->instance ?? 0);
+            $activityname = clean_param((string)($this->page->cm->name ?? ''), PARAM_TEXT);
             $sectionnum = (int)($this->page->cm->sectionnum ?? 0);
             $sectionid  = (int)($this->page->cm->section ?? 0);
         } else {
@@ -306,6 +314,9 @@ class block_alphabees extends block_base {
         }
 
         $userid = (int)$USER->id;
+        $pagecontext = $this->page->context ?? null;
+        $pagetype = clean_param((string)($this->page->pagetype ?? ''), PARAM_TEXT);
+        $pageurl = !empty($this->page->url) ? (string)$this->page->url->out(false) : '';
 
         // Make sure this placement has a stable UUID. Older instances created
         // before the upgrade won't have one yet — generate it lazily here so
@@ -320,6 +331,14 @@ class block_alphabees extends block_base {
             'courseid'       => $courseid,
             'sectionnum'     => $sectionnum,
             'sectionid'      => $sectionid,
+            'contextid'      => $pagecontext ? (int)$pagecontext->id : 0,
+            'contextlevel'   => $pagecontext ? (int)$pagecontext->contextlevel : 0,
+            'pagetype'       => $pagetype,
+            'pageurl'        => $pageurl,
+            'cmid'           => $cmid,
+            'modtype'        => $modtype,
+            'activityid'     => $activityid,
+            'activityname'   => $activityname,
             'userid'         => $userid,
             'placementuuid'  => $placementuuid,
             'siteidentifier' => \block_alphabees\local\site_registry::site_identifier(),

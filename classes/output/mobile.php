@@ -72,14 +72,60 @@ class mobile {
 
         // Determine section number from args when available; default to 0.
         $sectionnum = isset($args->section) ? (int)$args->section : 0;
+        $sectionid = 0;
+        $cmid = isset($args->cmid) ? (int)$args->cmid
+            : (isset($args->coursemoduleid) ? (int)$args->coursemoduleid : 0);
+        $modtype = isset($args->modtype) ? clean_param((string)$args->modtype, PARAM_ALPHANUMEXT)
+            : (isset($args->modname) ? clean_param((string)$args->modname, PARAM_ALPHANUMEXT) : '');
+        $activityid = isset($args->activityid) ? (int)$args->activityid : 0;
+        $activityname = isset($args->activityname) ? clean_param((string)$args->activityname, PARAM_TEXT) : '';
+        $pagetype = isset($args->pagetype) ? clean_param((string)$args->pagetype, PARAM_TEXT)
+            : (isset($args->pageType) ? clean_param((string)$args->pageType, PARAM_TEXT) : '');
+        $pageurl = isset($args->pageurl) ? clean_param((string)$args->pageurl, PARAM_URL)
+            : (isset($args->pageUrl) ? clean_param((string)$args->pageUrl, PARAM_URL) : '');
+        $contextid = 0;
+        $contextlevel = 0;
+
+        if ($cmid) {
+            $sql = "SELECT cm.id, cm.course, cm.section, cm.instance, m.name AS modtype
+                      FROM {course_modules} cm
+                      JOIN {modules} m ON m.id = cm.module
+                     WHERE cm.id = ?";
+            $cm = $DB->get_record_sql($sql, [$cmid], IGNORE_MISSING);
+            if ($cm) {
+                $courseid = $courseid ?: (int)$cm->course;
+                $sectionid = $sectionid ?: (int)$cm->section;
+                $activityid = $activityid ?: (int)$cm->instance;
+                $modtype = $modtype !== '' ? $modtype : (string)$cm->modtype;
+                $ctx = \context_module::instance($cmid, IGNORE_MISSING, false);
+                if ($ctx) {
+                    $contextid = (int)$ctx->id;
+                    $contextlevel = (int)$ctx->contextlevel;
+                }
+                if ($activityname === '' && $modtype !== '') {
+                    try {
+                        $name = $DB->get_field($modtype, 'name', ['id' => $cm->instance], IGNORE_MISSING);
+                        $activityname = $name !== false ? clean_param((string)$name, PARAM_TEXT) : '';
+                    } catch (\Throwable $e) {
+                        unset($e);
+                    }
+                }
+            }
+        }
 
         // Attempt to resolve the DB course_sections.id when possible.
-        $sectionid = 0;
-        if ($courseid && $sectionnum) {
+        if (!$sectionid && $courseid && $sectionnum) {
             $sectionid = (int)($DB->get_field('course_sections', 'id', [
                 'course'  => $courseid,
                 'section' => $sectionnum,
             ]) ?: 0);
+        }
+        if (!$contextid && $courseid) {
+            $ctx = \context_course::instance($courseid, IGNORE_MISSING, false);
+            if ($ctx) {
+                $contextid = (int)$ctx->id;
+                $contextlevel = (int)$ctx->contextlevel;
+            }
         }
 
         // Real user ID, as requested.
@@ -94,6 +140,14 @@ class mobile {
             'userid'     => $userid,
             'sectionnum' => $sectionnum,
             'sectionid'  => $sectionid,
+            'contextid'  => $contextid,
+            'contextlevel' => $contextlevel,
+            'pagetype'   => $pagetype,
+            'pageurl'    => $pageurl,
+            'cmid'       => $cmid,
+            'modtype'    => $modtype,
+            'activityid' => $activityid,
+            'activityname' => $activityname,
             'placementuuid'  => $placementuuid,
             'siteidentifier' => \block_alphabees\local\site_registry::site_identifier(),
             'primarycolor'   => $primarycolor,

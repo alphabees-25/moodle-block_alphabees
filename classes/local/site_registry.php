@@ -55,7 +55,8 @@ class site_registry {
     /**
      * Base path prefix for the al-tutor service that hosts our endpoints.
      *
-     * Together with BACKEND_URL this is the service base URL.
+     * Together with BACKEND_URL this is the service base URL:
+     *   https://api.alphalearn.ai/al/tutors
      *
      * Outbound calls are constructed as `{backend_url}{API_BASE}{relative}`.
      * Centralised so a future namespace move only changes one place.
