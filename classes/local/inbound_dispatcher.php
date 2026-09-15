@@ -31,7 +31,6 @@ namespace block_alphabees\local;
  * Inbound dispatcher.
  */
 class inbound_dispatcher {
-
     /**
      * Verify and dispatch an inbound signed request.
      *
@@ -67,6 +66,38 @@ class inbound_dispatcher {
         }
         $params = isset($body['params']) && is_array($body['params']) ? $body['params'] : [];
 
+        return self::execute(caller::site(), $action, $params);
+    }
+
+    /**
+     * Run one action on behalf of an already-authenticated caller.
+     *
+     * Shared by both entrances into the registry: api.php reaches this with a
+     * site caller once the Ed25519 signature holds, and the console gateway
+     * reaches it with a user caller once Moodle has established the session.
+     * Whether that caller may run this action at all is decided in one place,
+     * {@see action_policy::require_permitted()}, before the switch.
+     *
+     * @param caller $caller Who is asking.
+     * @param string $action Registry action name.
+     * @param array $params Action parameters.
+     * @return array Envelope { httpStatus: int, body: array }.
+     */
+    public static function execute(caller $caller, string $action, array $params): array {
+        if (!action_policy::known($action)) {
+            return self::deny(404);
+        }
+
+        try {
+            action_policy::require_permitted($caller, $action, $params);
+        } catch (\required_capability_exception $e) {
+            return self::deny(403, ['code' => 'capability_required']);
+        } catch (\moodle_exception $e) {
+            // Unknown to this caller, or the parameters did not name a course
+            // we could check against. Both are refusals, not server errors.
+            return self::deny(403, ['code' => 'action_not_permitted']);
+        }
+
         switch ($action) {
             case 'ping':
                 return self::ok(self::action_ping());
@@ -99,6 +130,18 @@ class inbound_dispatcher {
                 return self::action_upsert_modules($params);
             case 'delete_course_modules':
                 return self::action_delete_course_modules($params);
+            case 'set_activity_completion':
+                return self::action_set_activity_completion($params);
+            case 'upload_file':
+                return self::action_upload_file($params);
+            case 'list_h5p_libraries':
+                return self::action_list_h5p_libraries($params);
+            case 'notify':
+                return self::action_notify($params);
+            case 'console_context':
+            case 'get_learner_overview':
+            case 'send_user_message':
+                return self::run_console_action($caller, $action, $params);
             default:
                 return self::deny(404);
         }
@@ -388,11 +431,13 @@ class inbound_dispatcher {
                 unset($config->bot_label);
                 $changed = true;
             }
-            if ($oldbot === ''
+            if (
+                $oldbot === ''
                 && (string)$newbot !== ''
                 && self::param($params, 'visible', 'visible') === null
                 && isset($config->placement_visible)
-                && !$config->placement_visible) {
+                && !$config->placement_visible
+            ) {
                 $config->placement_visible = 1;
                 $changed = true;
             }
@@ -937,8 +982,13 @@ class inbound_dispatcher {
             return self::deny(400, ['error' => 'missing_course_or_section']);
         }
         $fields = [];
-        foreach (['name' => 'name', 'summary' => 'summary',
-                  'summary_format' => 'summaryFormat', 'visible' => 'visible'] as $snake => $camel) {
+        $coursefields = [
+            'name' => 'name',
+            'summary' => 'summary',
+            'summary_format' => 'summaryFormat',
+            'visible' => 'visible',
+        ];
+        foreach ($coursefields as $snake => $camel) {
             $value = self::param($params, $snake, $camel);
             if ($value !== null) {
                 $key = $snake === 'summary_format' ? 'summaryformat' : $snake;
@@ -976,6 +1026,11 @@ class inbound_dispatcher {
         if (!is_array($modules) || empty($modules)) {
             return self::deny(400, ['error' => 'missing_modules']);
         }
+        $actor = self::actor_user();
+        if (!$actor) {
+            return self::deny(403, ['error' => 'no_actor_user']);
+        }
+
         $results = [];
         foreach ($modules as $idx => $entry) {
             if (!is_array($entry)) {
@@ -983,7 +1038,10 @@ class inbound_dispatcher {
                 continue;
             }
             try {
-                $cm = course_writer::upsert_module(self::map_module_params($entry));
+                $mapped = self::map_module_params($entry);
+                $cm = self::run_as($actor, static function () use ($mapped) {
+                    return course_writer::upsert_module($mapped);
+                });
                 $results[] = [
                     'index' => $idx,
                     'ok' => true,
@@ -994,8 +1052,25 @@ class inbound_dispatcher {
                     'name' => isset($cm->name) ? (string)$cm->name : null,
                 ];
             } catch (\Throwable $e) {
-                $results[] = ['index' => $idx, 'ok' => false, 'error' => $e->getMessage()];
+                $results[] = [
+                    'index' => $idx,
+                    'ok' => false,
+                    'code' => $e instanceof \moodle_exception ? $e->errorcode : 'error',
+                    'error' => $e->getMessage(),
+                ];
             }
+        }
+
+        // Batch semantics: a partly successful push is a 200 carrying the
+        // per-entry outcome. When nothing at all could be written the caller
+        // should be able to branch on the status alone, so say 4xx — that is
+        // the single-module case, where an unsupported modname must trigger
+        // their fallback rather than look like a success with details.
+        $succeeded = count(array_filter($results, static function (array $r): bool {
+            return !empty($r['ok']);
+        }));
+        if ($succeeded === 0) {
+            return self::deny(422, ['results' => $results]);
         }
         return self::ok(['results' => $results]);
     }
@@ -1018,6 +1093,147 @@ class inbound_dispatcher {
             return self::deny(500, ['error' => 'internal', 'detail' => $e->getMessage()]);
         }
         return self::ok(['deleted' => $deleted, 'count' => count($deleted)]);
+    }
+
+    /**
+     * Completion write-back: set the activity-completion state of one user
+     * for one course module.
+     *
+     * Uses Moodle's completion *override* — the same mechanism as the
+     * "Override completion" action in the course completion report — so it
+     * works for manual and automatic completion alike and is recorded with
+     * overrideby = alphabees-service. Runs as the service user because
+     * completion_info::update_state() checks moodle/course:overridecompletion
+     * on the current $USER and api.php has no session.
+     *
+     * params: { cmid: int, userid: int, completed: bool }
+     *     or  { cmid: int, userid: int, state: "complete" | "incomplete" }
+     *
+     * Responses: 400 missing/invalid params, 404 cm/user unknown,
+     * 409 completion_not_enabled | user_not_tracked (user has no active
+     * enrolment counted in completion reports), 403 actor lacks capability
+     * (WS integration disabled and no admin fallback), 200 with resulting state.
+     *
+     * @param array $params
+     * @return array
+     */
+    private static function action_set_activity_completion(array $params): array {
+        global $CFG, $DB;
+        require_once($CFG->libdir . '/completionlib.php');
+
+        $cmid = (int)(self::param($params, 'cmid', 'cmId') ?? self::param($params, 'cm_id', 'cmid') ?? 0);
+        $userid = (int)(self::param($params, 'user_id', 'userId') ?? self::param($params, 'userid', 'userid') ?? 0);
+        if ($cmid <= 0 || $userid <= 0) {
+            return self::deny(400, ['error' => 'missing_cmid_or_userid']);
+        }
+
+        $completed = self::param($params, 'completed', 'completed');
+        if ($completed === null) {
+            $state = strtolower((string)(self::param($params, 'state', 'state')
+                ?? self::param($params, 'new_state', 'newState') ?? ''));
+            if ($state === 'complete' || $state === 'completed') {
+                $completed = true;
+            } else if ($state === 'incomplete') {
+                $completed = false;
+            } else {
+                return self::deny(400, ['error' => 'missing_state']);
+            }
+        } else {
+            $completed = self::truthy($completed);
+        }
+        $newstate = $completed ? COMPLETION_COMPLETE : COMPLETION_INCOMPLETE;
+
+        $cm = get_coursemodule_from_id('', $cmid);
+        if (!$cm) {
+            return self::deny(404, ['error' => 'cm_not_found']);
+        }
+        if (!$DB->record_exists('user', ['id' => $userid, 'deleted' => 0])) {
+            return self::deny(404, ['error' => 'user_not_found']);
+        }
+
+        try {
+            $course = get_course((int)$cm->course);
+            $completion = new \completion_info($course);
+            if (!$completion->is_enabled($cm)) {
+                return self::deny(409, ['error' => 'completion_not_enabled']);
+            }
+            if (!$completion->is_tracked_user($userid)) {
+                return self::deny(409, ['error' => 'user_not_tracked']);
+            }
+
+            $actor = self::actor_user();
+            if (!$actor) {
+                return self::deny(403, ['error' => 'no_actor_user']);
+            }
+            if (!$completion->user_can_override_completion($actor)) {
+                return self::deny(403, ['error' => 'actor_lacks_overridecompletion']);
+            }
+
+            $data = self::run_as($actor, function () use ($completion, $cm, $userid, $newstate) {
+                $completion->update_state($cm, $newstate, $userid, true);
+                return $completion->get_data($cm, false, $userid);
+            });
+        } catch (\Throwable $e) {
+            debugging('[block_alphabees] set_activity_completion failed: ' . $e->getMessage(), DEBUG_DEVELOPER);
+            return self::deny(500, ['error' => 'internal', 'detail' => $e->getMessage()]);
+        }
+
+        $resultstate = (int)($data->completionstate ?? COMPLETION_INCOMPLETE);
+        return self::ok([
+            'cmid' => $cmid,
+            'userid' => $userid,
+            'courseid' => (int)$cm->course,
+            'completionstate' => $resultstate,
+            'completed' => $resultstate !== COMPLETION_INCOMPLETE,
+            'overrideby' => (int)($data->overrideby ?? 0),
+            'timemodified' => (int)($data->timemodified ?? 0),
+        ]);
+    }
+
+    /**
+     * User account inbound write actions run as when Moodle APIs check $USER.
+     *
+     * Prefers the alphabees-service user (manager role at system context),
+     * falls back to the primary admin when the WS integration was never
+     * enabled on this site.
+     *
+     * @return \stdClass|null
+     */
+    private static function actor_user(): ?\stdClass {
+        global $DB;
+        $actor = $DB->get_record('user', ['username' => ws_setup::SERVICE_USERNAME, 'deleted' => 0]);
+        if (!$actor) {
+            $actor = get_admin() ?: null;
+        }
+        return $actor ?: null;
+    }
+
+    /**
+     * Run a callback with $USER temporarily switched to the given account.
+     *
+     * api.php runs without a session (NO_MOODLE_COOKIES), so $USER is the
+     * not-logged-in stub; core APIs that capability-check the current user
+     * need a real actor. The previous $USER is restored afterwards.
+     *
+     * @param \stdClass $user
+     * @param callable $fn
+     * @return mixed
+     */
+    private static function run_as(\stdClass $user, callable $fn) {
+        global $USER;
+        $previous = $USER;
+        \core\session\manager::set_user($user);
+        try {
+            return $fn();
+        } finally {
+            if ($previous instanceof \stdClass) {
+                try {
+                    \core\session\manager::set_user($previous);
+                } catch (\Throwable $e) {
+                    $USER = $previous;
+                }
+            }
+        }
     }
 
     /**
@@ -1052,23 +1268,74 @@ class inbound_dispatcher {
      * @return array
      */
     private static function map_module_params(array $entry): array {
-        $map = [
-            'cmid' => self::param($entry, 'cmid', 'cmid'),
-            'course' => self::param($entry, 'course_id', 'courseId') ?? self::param($entry, 'course', 'course'),
-            'section' => self::param($entry, 'section', 'section'),
-            'modname' => self::param($entry, 'modname', 'modname'),
-            'name' => self::param($entry, 'name', 'name'),
-            'intro' => self::param($entry, 'intro', 'intro'),
-            'introformat' => self::param($entry, 'intro_format', 'introFormat'),
-            'visible' => self::param($entry, 'visible', 'visible'),
-            'showdescription' => self::param($entry, 'show_description', 'showDescription'),
-            'content' => self::param($entry, 'content', 'content'),
-            'contentformat' => self::param($entry, 'content_format', 'contentFormat'),
-            'externalurl' => self::param($entry, 'external_url', 'externalUrl'),
-            'display' => self::param($entry, 'display', 'display'),
-            'showexpanded' => self::param($entry, 'show_expanded', 'showExpanded'),
-            'files_itemid' => self::param($entry, 'files_itemid', 'filesItemId'),
+        // Every key a module type can consume has to be listed here: this is
+        // an allowlist, and anything missing is dropped before course_writer
+        // ever sees it — which produces a module that exists but was never
+        // filled in. Each entry is [internal key, snake_case, camelCase].
+        $fields = [
+            // Generic.
+            ['cmid', 'cmid', 'cmid'],
+            ['section', 'section', 'section'],
+            ['modname', 'modname', 'modname'],
+            ['name', 'name', 'name'],
+            ['intro', 'intro', 'intro'],
+            ['introformat', 'intro_format', 'introFormat'],
+            ['visible', 'visible', 'visible'],
+            ['showdescription', 'show_description', 'showDescription'],
+            ['display', 'display', 'display'],
+            ['grade', 'grade', 'grade'],
+            ['grademethod', 'grademethod', 'gradeMethod'],
+            ['files_itemid', 'files_itemid', 'filesItemId'],
+            // Page.
+            ['content', 'content', 'content'],
+            ['contentformat', 'content_format', 'contentFormat'],
+            // URL.
+            ['externalurl', 'external_url', 'externalUrl'],
+            // Folder.
+            ['showexpanded', 'show_expanded', 'showExpanded'],
+            // H5P activity.
+            ['displayoptions', 'displayoptions', 'displayOptions'],
+            ['enabletracking', 'enabletracking', 'enableTracking'],
+            ['reviewmode', 'reviewmode', 'reviewMode'],
+            // Assign.
+            ['duedate', 'duedate', 'dueDate'],
+            ['allowsubmissionsfromdate', 'allowsubmissionsfromdate', 'allowSubmissionsFromDate'],
+            ['cutoffdate', 'cutoffdate', 'cutoffDate'],
+            ['gradingduedate', 'gradingduedate', 'gradingDueDate'],
+            ['submissiondrafts', 'submissiondrafts', 'submissionDrafts'],
+            ['submission_onlinetext', 'submission_onlinetext', 'submissionOnlinetext'],
+            ['submission_file', 'submission_file', 'submissionFile'],
+            ['submission_file_maxfiles', 'submission_file_maxfiles', 'submissionFileMaxfiles'],
+            // Book.
+            ['numbering', 'numbering', 'numbering'],
+            ['navstyle', 'navstyle', 'navStyle'],
+            ['customtitles', 'customtitles', 'customTitles'],
+            ['chapters', 'chapters', 'chapters'],
+            // Forum.
+            ['forumtype', 'forumtype', 'forumType'],
+            ['forcesubscribe', 'forcesubscribe', 'forceSubscribe'],
+            ['discussions', 'discussions', 'discussions'],
+            // Glossary.
+            ['displayformat', 'displayformat', 'displayFormat'],
+            ['entries', 'entries', 'entries'],
+            // Quiz.
+            ['timeopen', 'timeopen', 'timeOpen'],
+            ['timeclose', 'timeclose', 'timeClose'],
+            ['timelimit', 'timelimit', 'timeLimit'],
+            ['preferredbehaviour', 'preferredbehaviour', 'preferredBehaviour'],
+            ['attempts', 'attempts', 'attempts'],
+            ['questionsperpage', 'questionsperpage', 'questionsPerPage'],
+            ['shuffleanswers', 'shuffleanswers', 'shuffleAnswers'],
+            ['questions', 'questions', 'questions'],
         ];
+
+        $map = [
+            'course' => self::param($entry, 'course_id', 'courseId') ?? self::param($entry, 'course', 'course'),
+        ];
+        foreach ($fields as [$key, $snake, $camel]) {
+            $map[$key] = self::param($entry, $snake, $camel);
+        }
+
         return array_filter($map, function ($v) {
             return $v !== null;
         });
@@ -1127,6 +1394,148 @@ class inbound_dispatcher {
     }
 
     /**
+     * Run a console handler, turning refusals into an envelope.
+     *
+     * The console bridge expects every answer in the same shape, so a missing
+     * record or a learner who is not in this course comes back as a refusal
+     * with a code rather than as an exception the caller has to special-case.
+     *
+     * @param caller $caller
+     * @param string $action
+     * @param array $params
+     * @return array
+     */
+    private static function run_console_action(caller $caller, string $action, array $params): array {
+        try {
+            switch ($action) {
+                case 'console_context':
+                    return self::ok(console_actions::context($caller));
+                case 'get_learner_overview':
+                    return self::ok(console_actions::learner_overview($caller, $params));
+                case 'send_user_message':
+                    return console_actions::send_user_message($caller, $params);
+                default:
+                    return self::deny(404);
+            }
+        } catch (\required_capability_exception $e) {
+            return self::deny(403, ['code' => 'capability_required']);
+        } catch (\moodle_exception $e) {
+            return self::deny(400, ['code' => $e->errorcode]);
+        }
+    }
+
+    /**
+     * Report which H5P libraries this site has installed.
+     *
+     * A content-only .h5p package — h5p.json plus content/, without the
+     * library folders — is only importable when every preloaded dependency is
+     * already present at a matching major.minor version. Moodle ships none of
+     * them: they arrive when an admin fetches content types from the H5P hub
+     * or uploads a full package once. Rather than have the generator guess
+     * versions and find out through a failed import, let it ask.
+     *
+     * @param array $params Optionally machinenames[] to narrow the answer.
+     * @return array
+     */
+    private static function action_list_h5p_libraries(array $params): array {
+        global $DB;
+
+        if (!$DB->get_manager()->table_exists('h5p_libraries')) {
+            return self::ok(['available' => false, 'libraries' => []]);
+        }
+
+        $conditions = [];
+        $names = self::param($params, 'machinenames', 'machineNames');
+        if (is_array($names) && !empty($names)) {
+            $clean = array_values(array_filter(array_map(static function ($n) {
+                return clean_param((string)$n, PARAM_ALPHANUMEXT);
+            }, $names)));
+            if (!empty($clean)) {
+                $conditions['machinename'] = $clean;
+            }
+        }
+
+        if (isset($conditions['machinename'])) {
+            [$insql, $inparams] = $DB->get_in_or_equal($conditions['machinename'], SQL_PARAMS_NAMED, 'mn');
+            $records = $DB->get_records_select(
+                'h5p_libraries',
+                'machinename ' . $insql,
+                $inparams,
+                'machinename ASC, majorversion ASC, minorversion ASC'
+            );
+        } else {
+            $records = $DB->get_records(
+                'h5p_libraries',
+                null,
+                'machinename ASC, majorversion ASC, minorversion ASC'
+            );
+        }
+
+        $libraries = [];
+        foreach ($records as $row) {
+            $libraries[] = [
+                'machinename' => (string)$row->machinename,
+                'title' => (string)($row->title ?? ''),
+                'major' => (int)$row->majorversion,
+                'minor' => (int)$row->minorversion,
+                'patch' => (int)$row->patchversion,
+                'version' => (int)$row->majorversion . '.' . (int)$row->minorversion,
+                'runnable' => !empty($row->runnable),
+                'enabled' => !isset($row->enabled) || !empty($row->enabled),
+            ];
+        }
+
+        return self::ok([
+            'available' => true,
+            'count' => count($libraries),
+            'libraries' => $libraries,
+        ]);
+    }
+
+    /**
+     * Store one file in a draft area so a later module can reference it.
+     *
+     * Runs as the service user because draft areas live in a user context and
+     * upsert_modules resolves them as that same account.
+     *
+     * @param array $params
+     * @return array
+     */
+    private static function action_upload_file(array $params): array {
+        $actor = self::actor_user();
+        if (!$actor) {
+            return self::deny(403, ['error' => 'no_actor_user']);
+        }
+        try {
+            $result = self::run_as($actor, static function () use ($params) {
+                return file_uploader::upload($params);
+            });
+            return self::ok($result);
+        } catch (\moodle_exception $e) {
+            return self::deny(400, ['code' => $e->errorcode, 'error' => $e->getMessage()]);
+        } catch (\Throwable $e) {
+            return self::deny(500, ['error' => 'upload_failed']);
+        }
+    }
+
+    /**
+     * Deliver a backend-triggered notification to a course's responsible staff.
+     *
+     * The heavy lifting — recipient verification, dedup, message building —
+     * lives in {@see notifier}; this only shapes the response envelope.
+     *
+     * @param array $params
+     * @return array
+     */
+    private static function action_notify(array $params): array {
+        try {
+            return self::ok(notifier::send($params));
+        } catch (\moodle_exception $e) {
+            return self::deny(400, ['code' => $e->errorcode]);
+        }
+    }
+
+    /**
      * Accept canonical action names and lifecycle aliases from the portal.
      *
      * @param array $body
@@ -1174,9 +1583,11 @@ class inbound_dispatcher {
             ]);
             foreach ($rows as $row) {
                 $payload = json_decode((string)$row->payload, true);
-                if (is_array($payload)
+                if (
+                    is_array($payload)
                     && isset($payload['event_type'])
-                    && (string)$payload['event_type'] === $eventtype) {
+                    && (string)$payload['event_type'] === $eventtype
+                ) {
                     $DB->delete_records('block_alphabees_retryqueue', ['id' => $row->id]);
                 }
             }

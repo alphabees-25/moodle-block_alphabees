@@ -45,7 +45,6 @@ use block_alphabees\local\site_registry;
  * Ad-hoc task that posts a single placement lifecycle event to the backend.
  */
 class post_placement_event extends \core\task\adhoc_task {
-
     /**
      * Return the human-readable name for the task list UI.
      *

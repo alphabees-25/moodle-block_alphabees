@@ -24,7 +24,7 @@
 define([
     'block_alphabees/config',
     'al-chat-widget'
-], function(config, externalIgnore) {
+], function (config, externalIgnore) {
     "use strict";
 
     const _loadAlChat = window._loadAlChat;
@@ -38,20 +38,20 @@ define([
          * @param {string} primaryColor Primary color hex (e.g., "#72AECF").
          * @param {{courseid:number, sectionnum:number, sectionid:number, userid:number}} ctx Context data.
          */
-        init: function(apiKey, botId, primaryColor, ctx) {
+        init: function (apiKey, botId, primaryColor, ctx) {
             if (typeof _loadAlChat !== "function") {
                 window.console && console.error("[alphabees] _loadAlChat is not defined.");
                 return;
             }
             try {
-                const currentSessionId = function() {
+                const currentSessionId = function () {
                     const state = window.alphabees && window.alphabees.state ? window.alphabees.state : null;
                     if (!state) {
                         return "";
                     }
                     return String(state.sessionId || state.session_id || state.conversationId || state.conversation_id || "");
                 };
-                const emitMoodleContextEvent = function(payload, reason) {
+                const emitMoodleContextEvent = function (payload, reason) {
                     const eventPayload = {
                         eventType: "moodle.context.changed",
                         reason: reason || "init",
@@ -94,6 +94,19 @@ define([
                     placementUuid: placementUuid,
                     siteIdentifier: siteIdentifier
                 };
+                // Opt-in user profile (site setting send_userprofile): first
+                // name only, top-level like userId — never inside 'context'.
+                if (ctx && ctx.userprofile && ctx.userprofile.firstName) {
+                    payload.userProfile = { firstName: String(ctx.userprofile.firstName) };
+                }
+
+                // Deep link from a Moodle notification: open this exercise or
+                // thread. Top-level like userId, deliberately not inside
+                // 'context' — it is an instruction to the UI, not material for
+                // the agent's prompt.
+                if (ctx && ctx.deeplink) {
+                    payload.deepLink = String(ctx.deeplink);
+                }
 
                 window.console && console.log("[alphabees] Initializing chat widget…", { userId, context, placementUuid, siteIdentifier });
 
@@ -104,22 +117,29 @@ define([
 
                 if (!window.__alphabeesMoodleContextWatcher) {
                     window.__alphabeesMoodleContextWatcher = true;
-                    const pushLatestState = function() {
+                    const pushLatestState = function () {
                         const latest = window.__alphabeesMoodleLastPayload;
                         if (!latest) {
                             return;
                         }
                         latest.context = latest.context || {};
                         latest.context.pageUrl = window.location.href;
-                        window.postMessage({ type: "alUpdateState", data: latest }, "*");
-                        emitMoodleContextEvent(latest, "navigation");
+                        // The name never changes within a session — sent once
+                        // at init, omitted from navigation pushes.
+                        const navPayload = Object.assign({}, latest);
+                        delete navPayload.userProfile;
+                        // Same for the deep link: acting on it once is the
+                        // point, reopening it on every page change is not.
+                        delete navPayload.deepLink;
+                        window.postMessage({ type: "alUpdateState", data: navPayload }, "*");
+                        emitMoodleContextEvent(navPayload, "navigation");
                     };
-                    ["pushState", "replaceState"].forEach(function(method) {
+                    ["pushState", "replaceState"].forEach(function (method) {
                         const original = window.history && window.history[method];
                         if (typeof original !== "function") {
                             return;
                         }
-                        window.history[method] = function() {
+                        window.history[method] = function () {
                             const result = original.apply(this, arguments);
                             window.setTimeout(pushLatestState, 0);
                             return result;

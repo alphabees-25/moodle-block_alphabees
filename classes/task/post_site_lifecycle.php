@@ -33,7 +33,6 @@ use block_alphabees\local\ws_setup;
  * Sends site.paused / site.resumed / site.disconnected lifecycle events.
  */
 class post_site_lifecycle extends \core\task\adhoc_task {
-
     /**
      * Return the human-readable name for the task list UI.
      *
@@ -63,8 +62,10 @@ class post_site_lifecycle extends \core\task\adhoc_task {
             mtrace('[block_alphabees] post_site_lifecycle: site is not registered or registration is blocked; skipping.');
             return;
         }
-        if ($eventtype === 'site.resumed'
-            && (!site_registry::api_key_present() || site_registry::is_registration_blocked())) {
+        if (
+            $eventtype === 'site.resumed'
+            && (!site_registry::api_key_present() || site_registry::is_registration_blocked())
+        ) {
             mtrace('[block_alphabees] post_site_lifecycle: resume requires a valid saved API key; skipping.');
             return;
         }

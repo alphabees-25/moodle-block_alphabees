@@ -1,0 +1,145 @@
+/*
+ * Styles for block_alphabees.
+ *
+ * Every selector is scoped to one of the plugin's own admin pages. A block's
+ * styles.css is aggregated into the theme and served on every page of the
+ * site, so anything unscoped here would leak into all of Moodle.
+ *
+ * Dark mode keys off Moodle's own [data-bs-theme="dark"] and never off
+ * prefers-color-scheme: a light Moodle theme stays light regardless of the
+ * operating system, and following the OS here would put dark panels on a white
+ * page for anyone whose machine is set to dark.
+ */
+
+#page-admin-setting-blocksettingalphabees,
+#page-admin-setting-block_alphabees_texts {
+    --alphabees-accent: #2e7fa8;
+    --alphabees-accent-soft: #72aecf;
+    --alphabees-band: #f2f8fb;
+    --alphabees-band-border: #d6e6ef;
+    --alphabees-muted: #5c6d7b;
+}
+
+[data-bs-theme="dark"] #page-admin-setting-blocksettingalphabees,
+[data-bs-theme="dark"] #page-admin-setting-block_alphabees_texts {
+    --alphabees-accent: #86bedd;
+    --alphabees-accent-soft: #72aecf;
+    --alphabees-band: #16222b;
+    --alphabees-band-border: #27404f;
+    --alphabees-muted: #9db0bd;
+}
+
+/* ---------- brand header ---------- */
+
+#page-admin-setting-blocksettingalphabees .alphabees-brand,
+#page-admin-setting-block_alphabees_texts .alphabees-brand {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem 1.25rem;
+    margin-bottom: 0.5rem;
+    background: var(--alphabees-band);
+    border: 1px solid var(--alphabees-band-border);
+    border-left: 4px solid var(--alphabees-accent);
+    border-radius: 8px;
+}
+
+#page-admin-setting-blocksettingalphabees .alphabees-brand-logo,
+#page-admin-setting-block_alphabees_texts .alphabees-brand-logo {
+    /* The source asset is portrait; height drives the size and the width
+       follows, so the band keeps its rhythm whatever logo is dropped in. */
+    height: 44px;
+    width: auto;
+    flex: none;
+}
+
+#page-admin-setting-blocksettingalphabees .alphabees-brand-text,
+#page-admin-setting-block_alphabees_texts .alphabees-brand-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    min-width: 0;
+}
+
+#page-admin-setting-blocksettingalphabees .alphabees-brand-name,
+#page-admin-setting-block_alphabees_texts .alphabees-brand-name {
+    font-size: 1.15rem;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+#page-admin-setting-blocksettingalphabees .alphabees-brand-tagline,
+#page-admin-setting-block_alphabees_texts .alphabees-brand-tagline {
+    font-size: 0.9rem;
+    color: var(--alphabees-muted);
+}
+
+#page-admin-setting-blocksettingalphabees .alphabees-brand-version,
+#page-admin-setting-block_alphabees_texts .alphabees-brand-version {
+    font-size: 0.78rem;
+    color: var(--alphabees-muted);
+    font-variant-numeric: tabular-nums;
+    margin-top: 0.15rem;
+}
+
+/* ---------- section headings ---------- */
+
+#page-admin-setting-blocksettingalphabees .form-description h3,
+#page-admin-setting-block_alphabees_texts .form-description h3 {
+    font-size: 1.05rem;
+    letter-spacing: 0.01em;
+    padding-bottom: 0.4rem;
+    border-bottom: 2px solid var(--alphabees-accent-soft);
+    display: inline-block;
+}
+
+/* ---------- status cards ---------- */
+
+#page-admin-setting-blocksettingalphabees .alphabees-status-card {
+    border-left: 3px solid var(--alphabees-accent);
+}
+
+/* ---------- the link into the texts page ---------- */
+
+#page-admin-setting-blocksettingalphabees .alphabees-settings-pointer .btn {
+    margin-top: 0.25rem;
+}
+
+#page-admin-setting-blocksettingalphabees .alphabees-settings-pointer .btn .fa {
+    margin-right: 0.4rem;
+    color: var(--alphabees-accent);
+}
+
+/* ---------- spacing ---------- */
+
+/* The save button sits directly under the last field, which reads as if it
+ * belonged to that field alone. Separate it so it is visibly the action for
+ * the whole page. */
+#page-admin-setting-blocksettingalphabees .form-buttons,
+#page-admin-setting-block_alphabees_texts .form-buttons {
+    margin-top: 2.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--alphabees-band-border);
+}
+
+/* Texts page: the HTML editor and the plain textarea butt straight into the
+ * next field. Give the long inputs room to breathe. */
+#page-admin-setting-block_alphabees_texts .form-item .form-setting .form-textarea,
+#page-admin-setting-block_alphabees_texts .form-item .form-setting .form-htmlarea {
+    margin-bottom: 1.25rem;
+}
+
+#page-admin-setting-block_alphabees_texts .form-item {
+    padding-bottom: 0.75rem;
+}
+
+/* ---------- narrow screens ---------- */
+
+@media (max-width: 576px) {
+    #page-admin-setting-blocksettingalphabees .alphabees-brand,
+    #page-admin-setting-block_alphabees_texts .alphabees-brand {
+        flex-direction: column;
+        align-items: flex-start;
+        text-align: left;
+    }
+}

@@ -1,142 +1,41 @@
 # Changelog
 
-All notable changes to the Alphabees AI Tutor Moodle block plugin are documented in this file.
+All notable changes to the Alphabees Moodle block are recorded here. Versions
+follow the plugin's `release` string in `version.php`.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+This file starts at 3.1.0, the first release published after 3.0.3.
 
----
+## 3.1.0 — 2026-09-15
 
-## [3.0.3] - 2026-06-24
+**Teachers can now answer learners directly inside Moodle.**
 
-### Added
-- Added support for portal-managed placements in Moodle activity contexts such as SCORM, Lesson, Quiz, H5P, Forum, Wiki, Database, and Feedback.
-- Added Moodle web-service access for additional activity content APIs where available on the target Moodle site.
-
-### Changed
-- Existing web-service tokens now keep working during upgrades while the Alphabees service permissions are refreshed.
-- Bumped plugin version to `2026062200` and release label to `3.0.3`.
-
----
-
-## [3.0.2] - 2026-06-11
-
-### Added
-- Portal-managed placements can now update Moodle block instances more reliably.
-- Moodle App/mobile support now uses the same relevant placement data as the web version.
-
-### Changed
-- Tutor and agent selection in block settings now shows the correct selected tutor after remote updates.
-- Tutor names are displayed more clearly when available.
-- The chat widget now loads from the production Alphabees domain.
-- Improved handling of placement updates such as tutor, color, visibility, and delete actions.
-- Improved compatibility across supported Moodle versions.
-- Bumped plugin version to `2026061100` and release label to `3.0.2`.
+- **Teacher console.** A new page in Moodle showing the questions learners
+  asked the AI tutor, with the learner's progress alongside, so a teacher can
+  step in and reply. No Alphabees portal login — Moodle roles decide who gets
+  in. Opens from a course's *More* menu or straight from a notification.
+- **Moodle notifications.** Teachers are alerted through the bell, by email and
+  in the Moodle app when a learner is waiting for a human. Learners are
+  notified when a teacher sends them an exercise or answers their question, and
+  land back in the tutor on the right item. Everyone keeps Moodle's usual
+  per-channel notification settings.
+- **Rename the block, replace its texts.** The tutor block can carry your own
+  name — site-wide or differently per course — and the info texts learners see
+  can be replaced. Both on their own settings page; leave a field empty and the
+  built-in English or German wording applies, following each user's language.
+- **More activity types from the portal.** Generated courses can now contain
+  assignments, books, forums, glossaries, H5P activities and quizzes, not only
+  pages, links and files.
+- **Richer course knowledge.** The tutor can read quiz questions and a wider
+  range of activity content, and can mark activities complete for a learner.
+- **Optional personal address.** A new site setting lets the tutor greet
+  learners by first name. Off by default; no other personal data is sent.
 
 ### Fixed
-- Fixed an issue where the chat widget AMD module could fail to load in Moodle.
 
-### Upgrade Notes
-- Recommended update for all installations using portal-managed placements.
-- After updating, clear Moodle caches if the old widget version is still loaded.
+- Web-service access no longer fails on sites where no role grants the REST
+  protocol capability — the plugin's own service role now carries it.
 
----
+**After updating:** confirm the plugin upgrade in Moodle. The console
+permissions are created during that upgrade and reach teachers, editing
+teachers and managers automatically — no role configuration needed.
 
-## [3.0.1] - 2026-05-18
-
-### Fixed
-- Added an idempotent upgrade step that creates the `block_alphabees_nonces` and `block_alphabees_retryqueue` tables when upgrading from older plugin versions.
-- Prevented `dml_exception` database-read errors on upgraded customer sites where Moodle had not run `db/install.xml` for the V3 tables.
-
-### Changed
-- Bumped plugin version to `2026051800` and release label to `3.0.1`.
-
----
-
-## [3.0.0] - 2026-05-10
-
-### Added
-- First stable 3.x release.
-- Automatic Moodle site registration with the Alphabees backend after saving the API key.
-- Signed backend communication using locally generated Ed25519 keys, site identifiers, and nonce replay protection.
-- Optional Alphabees web-services integration with automatic service user creation, role assignment, token generation, and teardown.
-- Portal-managed placement synchronization for Alphabees blocks.
-- Scheduled tasks for site registration, placement sync, outbound retry processing, web-service token posting, placement lifecycle events, and nonce cleanup.
-- Retry queue for transient outbound backend communication failures.
-- Backend course writing/export support and REST connection endpoint.
-- Status and diagnostics panel for backend connection and web-services state.
-
-### Changed
-- Updated supported Moodle range to 4.1 LTS through 5.2.
-- Updated plugin version to `2026051001` and release label to `3.0.0`.
-- Updated portal references to `portal.alphalearn.ai`.
-- Updated chat widget and mobile app configuration for the current Alphabees backend.
-
-### Fixed
-- Corrected GitHub README links and screenshot references for the current public repository.
-
----
-
-## [2.0.3] - 2025-10-14
-
-### Fixed
-- Bug fix in AMD build (JavaScript module)
-- Version number update
-
----
-
-## [2.0.1] - 2025-10-09
-
-### Added
-- Moodle 5.1 support added to supported versions list
-
-### Changed
-- Updated sidebar text
-- Bumped plugin version to `2025100901`
-
----
-
-## [2.0.0] - 2025-09-03
-
-### Added
-- Mobile app support
-- Moodle 5 compliance
-
-### Changed
-- Cleaned up repository (removed unwanted files, updated `.gitignore`)
-- Updated README
-
-### Fixed
-- Missing language strings added
-- Privacy API implementation corrected
-- Various Moodle compliance issues resolved
-- Gruntfile fixed
-- Node modules properly excluded from tracking
-- Image references corrected
-
----
-
-## [1.0.1] - 2025-01-28
-
-### Changed
-- Updated widget version
-- Added screenshots to README
-
-### Fixed
-- Moodle flags corrected
-- Image reference fixed
-- Added README to install ZIP package
-
----
-
-## [1.0.0] - 2024-12-11
-
-### Added
-- Initial release of the Alphabees AI Tutor block plugin
-- Integration of AI tutor chat widget into Moodle via block structure
-- API key configuration in admin settings
-- Tutor selection via block instance settings
-- WebSocket-driven real-time chat communication
-- Multi-language support (English and German)
-- Moodle code guidelines compliance
-- GNU GPL v3.0 license

@@ -60,10 +60,12 @@ function block_alphabees_apikey_changed(): void {
         && $registeredfingerprint !== null
         && hash_equals($registeredfingerprint, $currentfingerprint);
 
-    if (\block_alphabees\local\site_registry::is_registered()
+    if (
+        \block_alphabees\local\site_registry::is_registered()
         && \block_alphabees\local\site_registry::is_sync_paused()
         && $sameasregistered
-        && !\block_alphabees\local\site_registry::is_registration_blocked()) {
+        && !\block_alphabees\local\site_registry::is_registration_blocked()
+    ) {
         return;
     }
 
@@ -105,9 +107,11 @@ function block_alphabees_drop_queued_site_lifecycle_event(string $eventtype): vo
     ]);
     foreach ($rows as $row) {
         $payload = json_decode((string)$row->payload, true);
-        if (is_array($payload)
+        if (
+            is_array($payload)
             && isset($payload['event_type'])
-            && (string)$payload['event_type'] === $eventtype) {
+            && (string)$payload['event_type'] === $eventtype
+        ) {
             $DB->delete_records('block_alphabees_retryqueue', ['id' => $row->id]);
         }
     }
@@ -364,7 +368,7 @@ function block_alphabees_render_connection_status(): string {
 
     return \html_writer::div(
         $headerrow . $details,
-        'card card-body bg-light mb-3'
+        'card card-body bg-light mb-3 alphabees-status-card'
     );
 }
 
@@ -494,7 +498,7 @@ function block_alphabees_render_ws_status(): string {
 
     return \html_writer::div(
         $headerrow . $statusline . $details,
-        'card card-body bg-light mb-3'
+        'card card-body bg-light mb-3 alphabees-status-card'
     );
 }
 
@@ -529,9 +533,11 @@ function block_alphabees_ws_enabled_changed(): void {
             \block_alphabees\local\ws_setup::record_token_post_status('error', $e->getMessage());
             return;
         }
-        if (!\block_alphabees\local\site_registry::is_registered()
+        if (
+            !\block_alphabees\local\site_registry::is_registered()
             || \block_alphabees\local\site_registry::is_registration_blocked()
-            || \block_alphabees\local\site_registry::is_sync_paused()) {
+            || \block_alphabees\local\site_registry::is_sync_paused()
+        ) {
             \block_alphabees\local\ws_setup::record_token_post_status('never');
             return;
         }
@@ -555,9 +561,11 @@ function block_alphabees_ws_enabled_changed(): void {
         \block_alphabees\local\ws_setup::record_token_post_status('error', $e->getMessage());
         return;
     }
-    if (!\block_alphabees\local\site_registry::is_registered()
+    if (
+        !\block_alphabees\local\site_registry::is_registered()
         || \block_alphabees\local\site_registry::is_registration_blocked()
-        || \block_alphabees\local\site_registry::is_sync_paused()) {
+        || \block_alphabees\local\site_registry::is_sync_paused()
+    ) {
         \block_alphabees\local\ws_setup::record_token_post_status('never');
         return;
     }
@@ -589,10 +597,112 @@ function block_alphabees_render_status_table(array $rows): string {
         if ($help) {
             $labelcell .= \html_writer::div(s($help), 'small text-muted');
         }
-        $tablerows .= \html_writer::tag('tr',
+        $tablerows .= \html_writer::tag(
+            'tr',
             \html_writer::tag('th', $labelcell, ['style' => 'text-align:left;vertical-align:top;width:35%;'])
             . \html_writer::tag('td', $value, ['style' => 'vertical-align:top;'])
         );
     }
     return \html_writer::tag('table', $tablerows, ['class' => 'generaltable']);
+}
+
+/**
+ * Build the description of a custom-text setting: the explanatory string
+ * followed by a preview of the built-in text used while the field is empty.
+ *
+ * @param string $descidentifier Lang string identifier of the description.
+ * @param string $builtinidentifier Lang string identifier of the built-in text.
+ * @return string HTML.
+ */
+function block_alphabees_custom_text_desc(string $descidentifier, string $builtinidentifier): string {
+    $builtin = get_string($builtinidentifier, 'block_alphabees');
+    return get_string($descidentifier, 'block_alphabees')
+        . html_writer::div(
+            html_writer::tag('strong', get_string('customtexts_builtin', 'block_alphabees'))
+            . html_writer::div($builtin, 'mt-1 p-2 border rounded bg-light'),
+            'mt-2 small'
+        );
+}
+
+/**
+ * Add the Alphabees console to a course's navigation.
+ *
+ * Appears in the course "More" menu, and only for people who may actually
+ * open it — the capability check here is what keeps the entry invisible to
+ * learners rather than merely unhelpful.
+ *
+ * @param navigation_node $navigation Course navigation node.
+ * @param stdClass $course Course record.
+ * @param context_course $context Course context.
+ * @return void
+ */
+function block_alphabees_extend_navigation_course(
+    navigation_node $navigation,
+    stdClass $course,
+    context_course $context
+): void {
+    if (!block_alphabees_console_capability_installed()) {
+        return;
+    }
+    if (!has_capability(\block_alphabees\local\action_policy::CAP_CONSOLE, $context)) {
+        return;
+    }
+
+    $navigation->add(
+        get_string('console_title', 'block_alphabees'),
+        new moodle_url('/blocks/alphabees/console.php', ['course' => $course->id]),
+        navigation_node::TYPE_SETTING,
+        null,
+        'block_alphabees_console'
+    );
+}
+
+/**
+ * Whether the console capability has reached the database yet.
+ *
+ * Capabilities declared in db/access.php only exist once the plugin upgrade
+ * has run. Between deploying new files and visiting the notifications page
+ * there is a window where the code is new and the database is not, and asking
+ * has_capability() about an unknown capability fills the log with
+ * "Capability ... was not found" on every page that checks it. Callers that
+ * run during ordinary page rendering ask this first.
+ *
+ * @return bool
+ */
+function block_alphabees_console_capability_installed(): bool {
+    return get_capability_info(\block_alphabees\local\action_policy::CAP_CONSOLE) !== null;
+}
+
+/**
+ * Render the branded header shown at the top of the plugin's admin pages.
+ *
+ * Built with html_writer rather than $OUTPUT: this string is assembled while
+ * the admin tree is being constructed, which happens before the theme and
+ * renderer are initialised. The logo is referenced by its direct path for the
+ * same reason — image_url() would pull the theme up early.
+ *
+ * @return string HTML.
+ */
+function block_alphabees_render_brand_header(): string {
+    $release = get_config('block_alphabees', 'release');
+    $version = is_string($release) && $release !== ''
+        ? get_string('brandheader_version', 'block_alphabees', $release)
+        : '';
+
+    $logo = html_writer::empty_tag('img', [
+        'src' => (new moodle_url('/blocks/alphabees/pix/logo.png'))->out(false),
+        'alt' => '',
+        'class' => 'alphabees-brand-logo',
+        // Decorative: the product name sits next to it in text.
+        'aria-hidden' => 'true',
+    ]);
+
+    $text = html_writer::div(
+        html_writer::div(get_string('pluginname', 'block_alphabees'), 'alphabees-brand-name')
+        . html_writer::div(get_string('brandheader_tagline', 'block_alphabees'), 'alphabees-brand-tagline')
+        . ($version !== '' ? html_writer::div($version, 'alphabees-brand-version') : ''),
+        'alphabees-brand-text'
+    );
+
+    return html_writer::div($logo . $text, 'alphabees-brand');
 }

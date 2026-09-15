@@ -35,7 +35,6 @@ namespace block_alphabees\local;
  * `\core\encryption`, which uses `$CFG->datarootsecret` as KEK.
  */
 class site_registry {
-
     /** Component name used for `config_plugins` lookups. */
     private const COMPONENT = 'block_alphabees';
 
@@ -49,6 +48,14 @@ class site_registry {
      * The actual Moodle plugin endpoints are more specific and are built by
      * appending API_BASE + route paths below. For example, registration is:
      *   https://api.alphalearn.ai/al/tutors/v1/moodle/register
+     *
+     * ALPHABEES_ENV_SWITCH — currently PROD. For development work switch to
+     * the DEV line and rebuild:
+     *   PROD: https://api.alphalearn.ai
+     *   DEV:  https://lassedesk.top
+     * Grep ALPHABEES_ENV_SWITCH for the other places: CONSOLE_BUNDLE_URL
+     * below, amd/src/config.js (rebuild via `npx grunt`) and
+     * assets/js/chat-mobile-app.js.
      */
     public const BACKEND_URL = 'https://api.alphalearn.ai';
 
@@ -62,6 +69,20 @@ class site_registry {
      * Centralised so a future namespace move only changes one place.
      */
     public const API_BASE = '/al/tutors';
+
+    /**
+     * Alphabees-hosted bundle that renders the console page.
+     *
+     * Loaded by amd/src/console.js and expected to expose _loadAlConsole().
+     * Until it is published for an environment the console page degrades to a
+     * notice, so a missing bundle is a visible but harmless state.
+     *
+     * ALPHABEES_ENV_SWITCH — currently PROD. For development work switch to
+     * the DEV line:
+     *   PROD: https://chat.alphalearn.ai/console-widget.js
+     *   DEV:  https://chat.alphabees.de/development/console-widget.js
+     */
+    public const CONSOLE_BUNDLE_URL = 'https://chat.alphalearn.ai/console-widget.js';
 
     /**
      * Return the full path for the moodle-plugin register endpoint.
@@ -132,6 +153,15 @@ class site_registry {
     }
 
     /**
+     * Return the URL of the console bundle.
+     *
+     * @return string
+     */
+    public static function console_bundle_url(): string {
+        return self::CONSOLE_BUNDLE_URL;
+    }
+
+    /**
      * Generate and persist a keypair if none exists, OR if the existing pair
      * is internally inconsistent (secret_key doesn't match public_key).
      *
@@ -149,8 +179,10 @@ class site_registry {
         $publickey = self::public_key();
         $secretkey = self::secret_key();
 
-        if ($publickey !== null && $secretkey !== null
-            && self::keypair_self_test($secretkey, $publickey)) {
+        if (
+            $publickey !== null && $secretkey !== null
+            && self::keypair_self_test($secretkey, $publickey)
+        ) {
             return $publickey;
         }
 
@@ -172,8 +204,10 @@ class site_registry {
      * @return bool
      */
     private static function keypair_self_test(string $secretkey, string $publickey): bool {
-        if (strlen($secretkey) !== SODIUM_CRYPTO_SIGN_SECRETKEYBYTES
-            || strlen($publickey) !== SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES) {
+        if (
+            strlen($secretkey) !== SODIUM_CRYPTO_SIGN_SECRETKEYBYTES
+            || strlen($publickey) !== SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES
+        ) {
             return false;
         }
         try {

@@ -33,7 +33,6 @@ namespace block_alphabees\local;
  * Keep it that way — site_registry is the place for stateful concerns.
  */
 class crypto {
-
     /** Maximum allowed clock skew between Moodle and backend. */
     public const TIMESTAMP_WINDOW_SECONDS = 300;
 

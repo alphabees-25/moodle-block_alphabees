@@ -28,7 +28,6 @@ namespace block_alphabees\task;
  * Scheduled task that removes expired nonces from block_alphabees_nonces.
  */
 class cleanup_nonces extends \core\task\scheduled_task {
-
     /**
      * Return the human-readable name for the task list UI.
      *
@@ -39,12 +38,17 @@ class cleanup_nonces extends \core\task\scheduled_task {
     }
 
     /**
-     * Delete all nonce rows whose expiry is in the past.
+     * Delete expired replay nonces and spent notification dedup keys.
      *
      * @return void
      */
     public function execute(): void {
         global $DB;
         $DB->delete_records_select('block_alphabees_nonces', 'expiresat < ?', [time()]);
+
+        $purged = \block_alphabees\local\notifier::purge_expired_log();
+        if ($purged > 0) {
+            mtrace('[block_alphabees] cleanup: removed ' . $purged . ' expired notification dedup key(s).');
+        }
     }
 }

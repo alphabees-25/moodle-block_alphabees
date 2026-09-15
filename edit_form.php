@@ -33,7 +33,6 @@ require_once($CFG->libdir . '/filelib.php');
  * Defines the form for configuring individual instances of the Alphabees block.
  */
 class block_alphabees_edit_form extends block_edit_form {
-
     /** @var string Notice shown when the tutor list cannot be loaded. */
     private $botoptionsnotice = '';
 
@@ -93,6 +92,17 @@ class block_alphabees_edit_form extends block_edit_form {
             );
             $mform->setType('config_override_remote', PARAM_BOOL);
         }
+
+        // Own name for this placement. Empty falls back to the site-wide name
+        // in the plugin settings, and that in turn to the plugin's own.
+        $mform->addElement(
+            'text',
+            'config_blocktitle',
+            get_string('blocktitle_instance', 'block_alphabees'),
+            ['size' => 40]
+        );
+        $mform->setType('config_blocktitle', PARAM_TEXT);
+        $mform->addHelpButton('config_blocktitle', 'blocktitle_instance', 'block_alphabees');
 
         if ($placementuuid !== '') {
             $mform->addElement(
@@ -291,5 +301,4 @@ class block_alphabees_edit_form extends block_edit_form {
         }
         return '';
     }
-
 }

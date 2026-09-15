@@ -42,6 +42,59 @@ defined('MOODLE_INTERNAL') || die();
 // a distinct name here lets the plugin install on those sites without
 // hitting a duplicate-key violation; the manual service can stay until the
 // admin removes it themselves.
+// Plugin-own external functions. Data-minimised by design: they return
+// counts, timestamps and titles only — never post content or author names —
+// so the backend can serve "what is new / what is due" questions without
+// personal data of other participants leaving Moodle.
+$functions = [
+    'block_alphabees_get_forum_activity' => [
+        'classname' => 'block_alphabees\\external\\get_forum_activity',
+        'methodname' => 'execute',
+        'description' => 'Anonymised forum activity metadata (counts and timestamps only) '
+            . 'for the forums a given user can see.',
+        'type' => 'read',
+        'ajax' => false,
+    ],
+    'block_alphabees_get_user_calendar' => [
+        'classname' => 'block_alphabees\\external\\get_user_calendar',
+        'methodname' => 'execute',
+        'description' => 'Personal calendar view of a given user (site, course, group and user '
+            . 'events incl. per-user overrides) for a service-token caller.',
+        'type' => 'read',
+        'ajax' => false,
+    ],
+    'block_alphabees_get_course_completions' => [
+        'classname' => 'block_alphabees\\external\\get_course_completions',
+        'methodname' => 'execute',
+        'description' => 'Completion percentage and state for every tracked user of one course '
+            . '(one call per course).',
+        'type' => 'read',
+        'ajax' => false,
+    ],
+    'block_alphabees_get_quiz_questions' => [
+        'classname' => 'block_alphabees\\external\\get_quiz_questions',
+        'methodname' => 'execute',
+        'description' => 'All questions of one quiz incl. answers, fractions and feedback as '
+            . 'structured data (knowledge-base ingestion; requires moodle/question:viewall).',
+        'type' => 'read',
+        'ajax' => false,
+    ],
+
+    // The console's entrance into the action registry, called from the browser
+    // of a signed-in user. Deliberately absent from the service below: a
+    // web-service token must not reach it, because this is the one path that
+    // runs with the calling person's own capabilities rather than the service
+    // user's manager rights.
+    'block_alphabees_console_call' => [
+        'classname' => 'block_alphabees\\external\\console_call',
+        'methodname' => 'execute',
+        'description' => 'Runs one Alphabees console operation as the signed-in Moodle user.',
+        'type' => 'write',
+        'ajax' => true,
+        'loginrequired' => true,
+    ],
+];
+
 $services = [
     'Alphabees AI Tutor' => [
         'shortname' => 'block_alphabees',
@@ -56,7 +109,17 @@ $services = [
             'core_course_get_courses_by_field',
             'core_course_get_contents',
             'core_course_get_categories',
+            // Static content activities. Their intro/content is partly
+            // visible through core_course_get_contents too, but the per-module
+            // functions carry the fields that matter for the knowledge base
+            // (url.externalurl, page.content, label.intro, book chapters).
             'mod_page_get_pages_by_courses',
+            'mod_url_get_urls_by_courses',
+            'mod_resource_get_resources_by_courses',
+            'mod_folder_get_folders_by_courses',
+            'mod_label_get_labels_by_courses',
+            'mod_book_get_books_by_courses',
+            'mod_imscp_get_imscps_by_courses',
 
             // Additional activity read paths — backend can ingest richer
             // course content when the corresponding Moodle activity plugins
@@ -67,10 +130,11 @@ $services = [
             'mod_lesson_get_page_data',
             'mod_lesson_get_pages_possible_jumps',
             'mod_quiz_get_quizzes_by_courses',
+            'mod_assign_get_assignments',
             'mod_scorm_get_scorms_by_courses',
             'mod_wiki_get_wikis_by_courses',
             'mod_wiki_get_subwikis',
-            'mod_wiki_get_pages',
+            'mod_wiki_get_subwiki_pages',
             'mod_wiki_get_page_contents',
             'mod_data_get_databases_by_courses',
             'mod_data_get_fields',
@@ -79,9 +143,43 @@ $services = [
             'mod_data_search_entries',
             'mod_feedback_get_feedbacks_by_courses',
             'mod_feedback_get_items',
+            'mod_glossary_get_glossaries_by_courses',
+            'mod_glossary_get_categories',
+            'mod_glossary_get_entries_by_letter',
+            'mod_glossary_get_entry_by_id',
+            'mod_choice_get_choices_by_courses',
+            'mod_choice_get_choice_options',
+            // The mod_survey plugin left core in Moodle 5.0 (optional since);
+            // these resolve on 4.x sites only and are filtered out elsewhere
+            // by partition_declared_service_functions().
+            'mod_survey_get_surveys_by_courses',
+            'mod_survey_get_questions',
+            'mod_workshop_get_workshops_by_courses',
+            'mod_lti_get_ltis_by_courses',
+            'mod_bigbluebuttonbn_get_bigbluebuttonbns_by_courses',
             'mod_forum_get_forums_by_courses',
             'mod_forum_get_forum_discussions',
             'mod_forum_get_discussion_posts',
+            'mod_forum_get_discussion_post',
+
+            // Calendar read paths — course / site / group events so the
+            // backend can surface deadlines and dates inside the tutor.
+            // Personal (user-type) events of learners are not visible to
+            // the service user and are intentionally out of scope.
+            'core_calendar_get_calendar_events',
+            'core_calendar_get_calendar_event_by_id',
+            'core_calendar_get_calendar_monthly_view',
+            'core_calendar_get_calendar_day_view',
+            'core_calendar_get_calendar_upcoming_view',
+            'core_calendar_get_action_events_by_course',
+            'core_calendar_get_action_events_by_courses',
+            'core_calendar_get_action_events_by_timesort',
+
+            // Plugin-own data-minimised functions (defined in $functions above).
+            'block_alphabees_get_forum_activity',
+            'block_alphabees_get_user_calendar',
+            'block_alphabees_get_course_completions',
+            'block_alphabees_get_quiz_questions',
 
             'core_enrol_get_users_courses',
             'core_enrol_get_enrolled_users',
@@ -99,6 +197,9 @@ $services = [
             // Activity / course completion tracking.
             'core_completion_get_activities_completion_status',
             'core_completion_get_course_completion_status',
+            // Completion write-back via token (alternative to the signed
+            // inbound action set_activity_completion in api.php).
+            'core_completion_override_activity_completion_status',
 
             // Groups — for filtering enrolment lists by class/cohort.
             'core_group_get_course_groups',

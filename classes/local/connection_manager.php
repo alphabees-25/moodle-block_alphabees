@@ -28,7 +28,6 @@ namespace block_alphabees\local;
  * Keeps the "Connect now" button and background registration task in sync.
  */
 class connection_manager {
-
     /**
      * Enable the default portal integration features after site registration.
      *

@@ -1,3 +1,4 @@
+<?php
 // This file is part of Moodle - http://moodle.org/
 //
 // Moodle is free software: you can redistribute it and/or modify
@@ -14,28 +15,18 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * AMD module to configure RequireJS for the Alphabees Chat Widget.
+ * Post-install hook for block_alphabees.
  *
  * @package   block_alphabees
- * @copyright 2025 Alphabees
+ * @copyright 2026 Alphabees
  * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
-define("block_alphabees/config", [], function () {
-    "use strict";
-
-    if (typeof window.requirejs !== "undefined") {
-        var bust = Math.floor(10000 + Math.random() * 90000);
-        window.requirejs.config({
-            paths: {
-                // ALPHABEES_ENV_SWITCH — currently PROD. Changing this needs a
-                // rebuild: `npx grunt` (regenerates amd/build/*.min.js).
-                // PROD: https://chat.alphalearn.ai/chat-widget.amd.js
-                // DEV:  https://chat.alphabees.de/development/chat-widget.amd.js
-                "al-chat-widget": "https://chat.alphalearn.ai/chat-widget.amd.js?v=" + bust
-            }
-        });
-    }
-
-    return {};
-});
+/**
+ * Seed optional settings so fresh installs are not prompted for them.
+ *
+ * @return void
+ */
+function xmldb_block_alphabees_install(): void {
+    \block_alphabees\local\custom_texts::seed_defaults();
+}

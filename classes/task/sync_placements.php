@@ -34,7 +34,6 @@ use block_alphabees\local\site_registry;
  * Scheduled task that syncs the full placement snapshot to the backend.
  */
 class sync_placements extends \core\task\scheduled_task {
-
     /**
      * Return the human-readable name for the task list UI.
      *

@@ -32,7 +32,6 @@ namespace block_alphabees\local;
  * Placement repository.
  */
 class placement_repository {
-
     /**
      * Return the placement_uuid stored in instance config, generating one if missing.
      *
@@ -75,8 +74,12 @@ class placement_repository {
             }
             if ($context instanceof \context_course) {
                 $targettype = 'course';
-                $course = $DB->get_record('course', ['id' => $context->instanceid],
-                    'id,shortname,fullname,category', IGNORE_MISSING);
+                $course = $DB->get_record(
+                    'course',
+                    ['id' => $context->instanceid],
+                    'id,shortname,fullname,category',
+                    IGNORE_MISSING
+                );
                 if ($course) {
                     $courseid = (int)$course->id;
                     $courseshortname = (string)$course->shortname;

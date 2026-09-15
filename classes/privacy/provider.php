@@ -15,30 +15,45 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Privacy API implementation for the Alphabees block.
+ * Privacy declaration for block_alphabees.
+ *
+ * The plugin keeps no personal data in Moodle's own tables — its two tables
+ * hold replay nonces and delivery counters, neither tied to a person. What it
+ * does do is exchange personal data with the Alphabees backend, both for the
+ * learner using the tutor and for the teacher answering in the console, so the
+ * declaration below describes that transfer.
  *
  * @package   block_alphabees
- * @copyright 2025 Alphabees
+ * @copyright 2026 Alphabees
  * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
 namespace block_alphabees\privacy;
 
-use core_privacy\local\metadata\null_provider;
+use core_privacy\local\metadata\collection;
 
 /**
- * Privacy provider for block_alphabees.
- *
- * This block does not store any personal user data in Moodle but communicates with the Alphabees backend.
+ * Privacy provider describing what leaves Moodle for the Alphabees backend.
  */
-class provider implements null_provider {
-
+class provider implements \core_privacy\local\metadata\provider {
     /**
-     * Get the reason why this plugin stores no personal user data.
+     * Describe the data this plugin sends to Alphabees.
      *
-     * @return string A language string identifier.
+     * @param collection $collection
+     * @return collection
      */
-    public static function get_reason(): string {
-        return 'privacy:metadata';
+    public static function get_metadata(collection $collection): collection {
+        $collection->add_external_location_link(
+            'alphabees_backend',
+            [
+                'userid' => 'privacy:metadata:alphabees_backend:userid',
+                'courseid' => 'privacy:metadata:alphabees_backend:courseid',
+                'message' => 'privacy:metadata:alphabees_backend:message',
+                'firstname' => 'privacy:metadata:alphabees_backend:firstname',
+            ],
+            'privacy:metadata:alphabees_backend'
+        );
+
+        return $collection;
     }
 }

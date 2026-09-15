@@ -55,4 +55,56 @@ $capabilities = [
         'contextlevel' => CONTEXT_SYSTEM,
         'archetypes' => [],
     ],
+
+    // Opens the Alphabees console for a course: the holder can read the
+    // conversations learners had with the tutor there and respond to them.
+    // Personal risk is the point of the capability, not a side effect.
+    'block/alphabees:useconsole' => [
+        'riskbitmask' => RISK_PERSONAL,
+        'captype' => 'read',
+        'contextlevel' => CONTEXT_COURSE,
+        'archetypes' => [
+            'teacher' => CAP_ALLOW,
+            'editingteacher' => CAP_ALLOW,
+            'manager' => CAP_ALLOW,
+        ],
+    ],
+
+    // Makes the holder eligible to be notified when a learner conversation in
+    // this course needs a human. Separate from :useconsole so a site can have
+    // people who answer without being paged, and vice versa.
+    'block/alphabees:receivenotifications' => [
+        'captype' => 'read',
+        'contextlevel' => CONTEXT_COURSE,
+        'archetypes' => [
+            'teacher' => CAP_ALLOW,
+            'editingteacher' => CAP_ALLOW,
+            'manager' => CAP_ALLOW,
+        ],
+    ],
+
+    // Makes an enrolled learner eligible for notifications addressed to them —
+    // an exercise a teacher sent, or a reply to their own question. Separate
+    // from :receivenotifications so the two audiences can never be mixed up:
+    // that one carries other people's conversations, this one only your own.
+    'block/alphabees:receivelearnernotifications' => [
+        'captype' => 'read',
+        'contextlevel' => CONTEXT_COURSE,
+        'archetypes' => [
+            'student' => CAP_ALLOW,
+            'teacher' => CAP_ALLOW,
+            'editingteacher' => CAP_ALLOW,
+            'manager' => CAP_ALLOW,
+        ],
+    ],
+
+    // Drives the Alphabees assistant, which executes tasks in Moodle under the
+    // holder's own identity. No archetype: this is granted deliberately, never
+    // inherited by being a teacher somewhere.
+    'block/alphabees:useagent' => [
+        'riskbitmask' => RISK_DATALOSS | RISK_PERSONAL,
+        'captype' => 'write',
+        'contextlevel' => CONTEXT_SYSTEM,
+        'archetypes' => [],
+    ],
 ];

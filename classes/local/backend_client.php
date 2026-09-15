@@ -37,7 +37,6 @@ require_once($CFG->libdir . '/filelib.php');
  * Backend client.
  */
 class backend_client {
-
     /** Successfully posted; response decoded. */
     public const STATUS_OK = 'ok';
 

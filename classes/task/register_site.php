@@ -42,7 +42,6 @@ use block_alphabees\local\site_registry;
  *   - registeredAt (informational)
  */
 class register_site extends \core\task\adhoc_task {
-
     /**
      * Return the human-readable name for the task list UI.
      *
@@ -210,8 +209,10 @@ class register_site extends \core\task\adhoc_task {
         }
 
         // Hex string: 64 chars, all hex.
-        if (strlen($trimmed) === SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES * 2
-            && ctype_xdigit($trimmed)) {
+        if (
+            strlen($trimmed) === SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES * 2
+            && ctype_xdigit($trimmed)
+        ) {
             $bin = hex2bin($trimmed);
             if ($bin !== false) {
                 return $bin;

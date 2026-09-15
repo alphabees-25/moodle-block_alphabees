@@ -40,7 +40,6 @@ use block_alphabees\local\ws_setup;
  * Ad-hoc task that sends the WS token (or a revocation) to the backend.
  */
 class post_ws_token extends \core\task\adhoc_task {
-
     /**
      * Return the human-readable name for the task list UI.
      *

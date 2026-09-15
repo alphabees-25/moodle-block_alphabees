@@ -33,7 +33,6 @@ namespace block_alphabees\output;
  * Output handlers for the Moodle App integration.
  */
 class mobile {
-
     /**
      * Returns a template (data marker) and inline JS for the Moodle App.
      *
@@ -131,13 +130,39 @@ class mobile {
         // Real user ID, as requested.
         $userid = (int)$USER->id;
 
+        // Opt-in (site setting, default off): first name only, for display
+        // and personal address in the widget. Empty string when disabled.
+        $userfirstname = get_config('block_alphabees', 'send_userprofile')
+            ? clean_param((string)$USER->firstname, PARAM_TEXT)
+            : '';
+
+        // Help label and info text. Admins can override the built-in language
+        // strings site-wide via plugin settings; empty settings fall back to
+        // the localized defaults (resolved in the requesting user's language).
+        $helplabel = \block_alphabees\local\custom_texts::info_text('custom_mobilehelplabel')
+            ?? get_string('help', 'block_alphabees');
+        $customhelptext = \block_alphabees\local\custom_texts::info_text('custom_mobilehelptext');
+        $helptext = $customhelptext !== null
+            ? format_text($customhelptext, FORMAT_HTML, ['context' => \context_system::instance()])
+            : get_string('helptitle', 'block_alphabees');
+
+        // Same name resolution as the web block: instance, then site, then plugin.
+        $instancetitle = !empty($placementconfig->blocktitle)
+            ? trim((string)$placementconfig->blocktitle) : '';
+        $blocktitle = $instancetitle !== ''
+            ? format_string($instancetitle, true, ['context' => \context_system::instance()])
+            : \block_alphabees\local\custom_texts::block_title();
+
         // Render the marker with whatever we resolved.
         $html = $OUTPUT->render_from_template('block_alphabees/mobile_view', [
-            'pluginname' => get_string('pluginname', 'block_alphabees'),
+            'pluginname' => $blocktitle,
+            'helplabel'  => $helplabel,
+            'helptext'   => $helptext,
             'courseid'   => $courseid,
             'botid'      => (string)$botid,
             'apikey'     => (string)$apikey,
             'userid'     => $userid,
+            'userfirstname' => $userfirstname,
             'sectionnum' => $sectionnum,
             'sectionid'  => $sectionid,
             'contextid'  => $contextid,

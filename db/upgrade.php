@@ -113,9 +113,11 @@ function xmldb_block_alphabees_upgrade(int $oldversion): bool {
     // legacy mobile-only key fallback so the app can never use stale config.
     if ($oldversion < 2026061100) {
         $apikey = get_config('block_alphabees', 'apikey');
-        if (!empty($apikey)
+        if (
+            !empty($apikey)
             && !empty(get_config('block_alphabees', 'registered_at'))
-            && !empty(get_config('block_alphabees', 'backend_public_key'))) {
+            && !empty(get_config('block_alphabees', 'backend_public_key'))
+        ) {
             set_config('registered_api_key', hash('sha256', (string)$apikey), 'block_alphabees');
         }
         unset_config('mobile_apikey', 'block_alphabees');
@@ -131,10 +133,12 @@ function xmldb_block_alphabees_upgrade(int $oldversion): bool {
     if ($oldversion < 2026062200) {
         try {
             $token = \block_alphabees\local\ws_setup::refresh_enabled_integration_for_upgrade();
-            if ($token !== null
+            if (
+                $token !== null
                 && \block_alphabees\local\site_registry::is_registered()
                 && !\block_alphabees\local\site_registry::is_registration_blocked()
-                && !\block_alphabees\local\site_registry::is_sync_paused()) {
+                && !\block_alphabees\local\site_registry::is_sync_paused()
+            ) {
                 $task = new \block_alphabees\task\post_ws_token();
                 $task->set_custom_data((object)[
                     'token' => $token,
@@ -154,6 +158,106 @@ function xmldb_block_alphabees_upgrade(int $oldversion): bool {
         }
 
         upgrade_block_savepoint(true, 2026062200, 'alphabees');
+    }
+
+    // 3.0.4: the service role now explicitly carries webservice/rest:use.
+    // Without it webservice/rest/server.php rejects the token with
+    // "accessexception: Access control exception" on sites where the
+    // authenticated-user role does not grant the protocol capability
+    // (mobile web services disabled or hardened role configuration).
+    // Fresh connects get it via ensure_role_and_assignment(); existing
+    // roles are repaired here.
+    if ($oldversion < 2026073100) {
+        $role = $DB->get_record('role', [
+            'shortname' => \block_alphabees\local\ws_setup::SERVICE_ROLE_SHORTNAME,
+        ]);
+        if ($role) {
+            assign_capability(
+                \block_alphabees\local\ws_setup::REST_PROTOCOL_CAPABILITY,
+                CAP_ALLOW,
+                (int)$role->id,
+                context_system::instance()->id,
+                true
+            );
+        }
+        upgrade_block_savepoint(true, 2026073100, 'alphabees');
+    }
+
+    // 3.0.5: optional custom block texts. Seed them as empty strings so
+    // Moodle's post-upgrade "New settings" page does not prompt admins for
+    // fields that are purely optional (empty = built-in localized text).
+    if ($oldversion < 2026081104) {
+        \block_alphabees\local\custom_texts::seed_defaults();
+        upgrade_block_savepoint(true, 2026081104, 'alphabees');
+    }
+
+    // 3.1.0: new WS function block_alphabees_get_quiz_questions, the inbound
+    // action set_activity_completion, and a batch of activity read paths that
+    // were never declared (mod_url/resource/folder/label/book/imscp/glossary/
+    // choice/survey/workshop/lti/bbb, mod_assign_get_assignments) plus
+    // core_completion_override_activity_completion_status.
+    // Core re-reads db/services.php after this upgrade anyway; the explicit
+    // (idempotent) service refresh additionally repairs sites whose service
+    // row was edited manually. Token stays unchanged, so no re-post.
+    if ($oldversion < 2026082701) {
+        try {
+            \block_alphabees\local\ws_setup::refresh_enabled_integration_for_upgrade();
+        } catch (\Throwable $e) {
+            debugging('[block_alphabees] upgrade 2026082700 service refresh skipped: '
+                . $e->getMessage(), DEBUG_DEVELOPER);
+        }
+        upgrade_block_savepoint(true, 2026082701, 'alphabees');
+    }
+
+    // 3.1.1: opt-in setting send_userprofile (sends the logged-in user's
+    // first name to the chat widget for display/personal address). Seed as
+    // disabled so the post-upgrade "New settings" page does not prompt
+    // admins — a privacy-relevant toggle must stay off until an admin
+    // deliberately enables it.
+    if ($oldversion < 2026090500) {
+        set_config('send_userprofile', 0, 'block_alphabees');
+        upgrade_block_savepoint(true, 2026090500, 'alphabees');
+    }
+
+    // 3.2.0: the console. Adds the dedup log the notification path uses so a
+    // backend retry cannot page a course team twice for the same event.
+    if ($oldversion < 2026090501) {
+        $table = new xmldb_table('block_alphabees_notifylog');
+        $table->add_field('id', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
+        $table->add_field('dedupkey', XMLDB_TYPE_CHAR, '64', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('provider', XMLDB_TYPE_CHAR, '64', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('courseid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, '0');
+        $table->add_field('recipients', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, '0');
+        $table->add_field('timecreated', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+        $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+        $table->add_index('dedupkey_uniq', XMLDB_INDEX_UNIQUE, ['dedupkey']);
+        $table->add_index('timecreated_idx', XMLDB_INDEX_NOTUNIQUE, ['timecreated']);
+
+        if (!$dbman->table_exists($table)) {
+            $dbman->create_table($table);
+        }
+
+        upgrade_block_savepoint(true, 2026090501, 'alphabees');
+    }
+
+    // 3.2.0: the info texts moved behind a toggle and the block gained a name
+    // of its own. Sites that already filled one of the four texts must keep
+    // seeing them, so switch the toggle on for them rather than silently
+    // reverting to the built-in wording.
+    if ($oldversion < 2026090901) {
+        $hastexts = false;
+        foreach (\block_alphabees\local\custom_texts::INFO_TEXTS as $name) {
+            if (trim((string)get_config('block_alphabees', $name)) !== '') {
+                $hastexts = true;
+                break;
+            }
+        }
+        if ($hastexts) {
+            set_config('customtexts_enabled', 1, 'block_alphabees');
+        }
+        \block_alphabees\local\custom_texts::seed_defaults();
+
+        upgrade_block_savepoint(true, 2026090901, 'alphabees');
     }
 
     return true;

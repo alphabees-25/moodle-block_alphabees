@@ -43,7 +43,6 @@ namespace block_alphabees\local;
  * Web-services auto-setup helper.
  */
 class ws_setup {
-
     /** Shortname of the external service we pre-declare in db/services.php. */
     public const SERVICE_SHORTNAME = 'block_alphabees';
 
@@ -58,6 +57,9 @@ class ws_setup {
 
     /** Capability granted by the role. */
     public const SERVICE_CAPABILITY = 'block/alphabees:usewebservice';
+
+    /** REST protocol capability required by webservice/rest/server.php. */
+    public const REST_PROTOCOL_CAPABILITY = 'webservice/rest:use';
 
     /** Component name used for config_plugins diagnostics. */
     private const COMPONENT = 'block_alphabees';
@@ -101,8 +103,10 @@ class ws_setup {
      */
     public static function refresh_enabled_integration_for_upgrade(): ?string {
         global $CFG;
-        if ((string)(get_config(self::COMPONENT, 'ws_enabled') ?: '') !== '1'
-            || site_registry::is_portal_disconnected()) {
+        if (
+            (string)(get_config(self::COMPONENT, 'ws_enabled') ?: '') !== '1'
+            || site_registry::is_portal_disconnected()
+        ) {
             return null;
         }
 
@@ -533,10 +537,12 @@ class ws_setup {
         }
 
         foreach ($availablefunctions as $functionname) {
-            if ($DB->record_exists('external_services_functions', [
+            if (
+                $DB->record_exists('external_services_functions', [
                 'externalserviceid' => $serviceid,
                 'functionname' => $functionname,
-            ])) {
+                ])
+            ) {
                 continue;
             }
             $DB->insert_record('external_services_functions', (object)[
@@ -602,7 +608,9 @@ class ws_setup {
      *
      *  1. The auto-created `alphabees_service` role — carries the
      *     `block/alphabees:usewebservice` capability that the external
-     *     service uses for its restricted-users access check.
+     *     service uses for its restricted-users access check, plus
+     *     `webservice/rest:use` so the REST server accepts the token even on
+     *     sites where no other role grants the protocol capability.
      *
      *  2. Moodle's built-in `manager` role — gives the service user the
      *     site-wide course/grade/user/enrolment access required for the
@@ -643,22 +651,32 @@ class ws_setup {
             set_role_contextlevels($roleid, [CONTEXT_SYSTEM]);
         }
         assign_capability(self::SERVICE_CAPABILITY, CAP_ALLOW, $roleid, $syscontext->id, true);
-        if (!$DB->record_exists('role_assignments', [
+        // The REST server rejects every token call with accessexception unless
+        // the token user holds webservice/rest:use. Most sites inherit it via
+        // the authenticated-user role (enabled mobile web services grant it),
+        // but hardened sites do not — carry it on our own role so the
+        // integration never depends on site-specific role configuration.
+        assign_capability(self::REST_PROTOCOL_CAPABILITY, CAP_ALLOW, $roleid, $syscontext->id, true);
+        if (
+            !$DB->record_exists('role_assignments', [
             'roleid' => $roleid,
             'userid' => $userid,
             'contextid' => $syscontext->id,
-        ])) {
+            ])
+        ) {
             role_assign($roleid, $userid, $syscontext->id);
         }
 
         // 2. Manager role — for site-wide course/grade/user/enrolment access.
         $managerrole = $DB->get_record('role', ['shortname' => 'manager']);
         if ($managerrole) {
-            if (!$DB->record_exists('role_assignments', [
+            if (
+                !$DB->record_exists('role_assignments', [
                 'roleid' => $managerrole->id,
                 'userid' => $userid,
                 'contextid' => $syscontext->id,
-            ])) {
+                ])
+            ) {
                 role_assign((int)$managerrole->id, $userid, $syscontext->id);
             }
         }
@@ -673,10 +691,12 @@ class ws_setup {
      */
     private static function ensure_authorised_user(int $serviceid, int $userid): void {
         global $DB;
-        if ($DB->record_exists('external_services_users', [
+        if (
+            $DB->record_exists('external_services_users', [
             'externalserviceid' => $serviceid,
             'userid' => $userid,
-        ])) {
+            ])
+        ) {
             return;
         }
         $DB->insert_record('external_services_users', (object)[

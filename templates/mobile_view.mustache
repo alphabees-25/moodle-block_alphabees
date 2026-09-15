@@ -52,13 +52,13 @@
     <!-- Pretty accordion help -->
     <div class="ab-help">
       <details>
-        <summary aria-label="Hilfe öffnen">
+        <summary aria-label="<% helplabel %>">
           <ion-icon class="ab-help-icon" name="information-circle-outline"></ion-icon>
-          <span><%#str%>help, block_alphabees<%/str%></span>
+          <span><% helplabel %></span>
           <ion-icon class="ab-chevron" name="chevron-down-outline"></ion-icon>
         </summary>
         <div class="ab-help-content">
-          <%#str%>helptitle, block_alphabees<%/str%>
+          <%& helptext %>
         </div>
       </details>
     </div>
@@ -71,6 +71,7 @@
      data-apikey="<% apikey %>"
      data-courseid="<% courseid %>"
      data-userid="<% userid %>"
+     data-userfirstname="<% userfirstname %>"
      data-sectionnum="<% sectionnum %>"
      data-sectionid="<% sectionid %>"
      data-contextid="<% contextid %>"

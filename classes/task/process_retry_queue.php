@@ -32,7 +32,6 @@ use block_alphabees\local\ws_setup;
  * Scheduled task that drains the outbound retry queue.
  */
 class process_retry_queue extends \core\task\scheduled_task {
-
     /** Stop trying after this many attempts. */
     private const MAX_ATTEMPTS = 8;
 
@@ -129,9 +128,11 @@ class process_retry_queue extends \core\task\scheduled_task {
 
             $attempts = (int)$row->attempts + 1;
             $httpcode = (int)($result['httpcode'] ?? 0);
-            if ($result['status'] === backend_client::STATUS_TRANSIENT
+            if (
+                $result['status'] === backend_client::STATUS_TRANSIENT
                 && !empty($result['ignored'])
-                && ($result['health_status'] ?? null) === 'paused') {
+                && ($result['health_status'] ?? null) === 'paused'
+            ) {
                 site_registry::pause_syncs((string)($result['error'] ?? 'site_paused'));
             }
             if (backend_client::requires_reconnect($result)) {

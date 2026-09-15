@@ -32,7 +32,6 @@ use block_alphabees\local\site_registry;
  * Defines the Alphabees AI Tutor block.
  */
 class block_alphabees extends block_base {
-
     /** Fallback widget color used when no portal-provided color is stored locally. */
     private const DEFAULT_PRIMARY_COLOR = '#72AECF';
 
@@ -43,7 +42,25 @@ class block_alphabees extends block_base {
      * @throws coding_exception
      */
     public function init(): void {
-        $this->title = get_string('pluginname', 'block_alphabees');
+        $this->title = \block_alphabees\local\custom_texts::block_title();
+    }
+
+    /**
+     * Apply the per-instance title once this instance's config is loaded.
+     *
+     * init() runs before the configuration exists, so a placement that carries
+     * its own name can only take effect here. Order is instance name, then the
+     * site-wide name, then the plugin's own.
+     *
+     * @return void
+     */
+    public function specialization(): void {
+        $title = isset($this->config->blocktitle) ? trim((string)$this->config->blocktitle) : '';
+        if ($title === '') {
+            return;
+        }
+        $context = $this->context ?? context_system::instance();
+        $this->title = format_string($title, true, ['context' => $context]);
     }
 
     /**
@@ -233,9 +250,17 @@ class block_alphabees extends block_base {
             return $this->content;
         }
 
-        // Content title and usage instructions.
-        $title = get_string('usagetitle', 'block_alphabees');
-        $text  = get_string('usagetext', 'block_alphabees');
+        // Content title and usage instructions. Admins can override the
+        // built-in language strings site-wide via plugin settings; empty
+        // settings fall back to the localized defaults.
+        $customtitle = \block_alphabees\local\custom_texts::info_text('custom_usagetitle');
+        $customtext  = \block_alphabees\local\custom_texts::info_text('custom_usagetext');
+        $title = $customtitle !== null
+            ? format_string($customtitle, true, ['context' => $this->page->context])
+            : get_string('usagetitle', 'block_alphabees');
+        $text = $customtext !== null
+            ? format_text($customtext, FORMAT_HTML, ['context' => $this->page->context])
+            : get_string('usagetext', 'block_alphabees');
 
         $this->content->text = '
             <details class="ab-accordion">
@@ -327,6 +352,16 @@ class block_alphabees extends block_base {
             ? clean_param($this->config->placement_uuid, PARAM_TEXT)
             : '';
 
+        // Arrived from a learner notification? The reference travels on the
+        // course URL and tells the widget what to open — the exercise that was
+        // sent, or the thread that was answered. One-shot: it is not repeated
+        // on later in-page navigation.
+        $deeplink = optional_param(
+            \block_alphabees\local\notifier::DEEPLINK_PARAM,
+            '',
+            PARAM_ALPHANUMEXT
+        );
+
         $extracontext = [
             'courseid'       => $courseid,
             'sectionnum'     => $sectionnum,
@@ -342,7 +377,17 @@ class block_alphabees extends block_base {
             'userid'         => $userid,
             'placementuuid'  => $placementuuid,
             'siteidentifier' => \block_alphabees\local\site_registry::site_identifier(),
+            'deeplink'       => $deeplink,
         ];
+
+        // Opt-in (site setting, default off): first name only — enough for
+        // display and personal address in the widget. Deliberately not part
+        // of the 'context' object, which feeds the agent's prompt assembly.
+        if (get_config('block_alphabees', 'send_userprofile')) {
+            $extracontext['userprofile'] = [
+                'firstName' => clean_param((string)$USER->firstname, PARAM_TEXT),
+            ];
+        }
 
         // Use Moodle's AMD module to load the chat widget.
         $this->page->requires->js_call_amd(
