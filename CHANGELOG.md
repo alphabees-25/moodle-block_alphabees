@@ -5,6 +5,16 @@ follow the plugin's `release` string in `version.php`.
 
 This file starts at 3.1.0, the first release published after 3.0.3.
 
+## 3.1.1 — 2026-09-16
+
+Courses generated in the Alphabees portal now arrive in Moodle complete.
+
+- Quizzes and assignments are created. Both were missing before.
+- Generated quizzes follow the site's own quiz defaults, instead of showing
+  learners nothing after an attempt.
+- Books, forums, glossaries and files import reliably.
+- A failed import now says why.
+
 ## 3.1.0 — 2026-09-15
 
 **Teachers can now answer learners directly inside Moodle.**

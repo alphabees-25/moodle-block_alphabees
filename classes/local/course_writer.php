@@ -454,6 +454,13 @@ class course_writer {
                 $moduleinfo->sendlatenotifications = 0;
                 $moduleinfo->sendstudentnotifications = 1;
                 $moduleinfo->teamsubmission = 0;
+                // Moodle's assign::add_instance() copies requireallteammemberssubmit
+                // and markingallocation off the form data without a guard. Under
+                // PHP 8 a property we never set reads as null, and assign has
+                // both columns NOT NULL — which is the whole of "Error writing
+                // to database" on every assignment we tried to create.
+                $moduleinfo->requireallteammemberssubmit = 0;
+                $moduleinfo->markingallocation = 0;
                 $moduleinfo->blindmarking = 0;
                 $moduleinfo->markingworkflow = 0;
                 $moduleinfo->attemptreopenmethod = 'none';
@@ -514,9 +521,29 @@ class course_writer {
                 // immediately after, later while open, after close). Take the
                 // site's own defaults so a quiz we create behaves like one an
                 // admin would have made by hand.
+                //
+                // quiz_process_options() rebuilds every review column from the
+                // *form* checkboxes — reviewattempt out of attemptduring,
+                // attemptimmediately, attemptopen, attemptclosed — and discards
+                // whatever the column itself held. Writing only the columns
+                // therefore produced quizzes with every review option off: no
+                // error, just a quiz that shows the learner nothing afterwards.
+                // Both are written, so the result is the same whether or not the
+                // release runs that converter.
+                $moments = [
+                    'during' => 0x10000,
+                    'immediately' => 0x01000,
+                    'open' => 0x00100,
+                    'closed' => 0x00010,
+                ];
+                $allmoments = array_sum($moments);
+                // The reviewmaxmarks column arrived in 4.4; get_config returns false
+                // where it does not exist and the extra properties are dropped by
+                // insert_record, so listing it costs nothing on older releases.
                 $reviewfields = [
                     'reviewattempt',
                     'reviewcorrectness',
+                    'reviewmaxmarks',
                     'reviewmarks',
                     'reviewspecificfeedback',
                     'reviewgeneralfeedback',
@@ -525,9 +552,14 @@ class course_writer {
                 ];
                 foreach ($reviewfields as $field) {
                     $configured = get_config('quiz', $field);
-                    $moduleinfo->{$field} = ($configured === false || $configured === null)
-                        ? 69904
+                    $mask = ($configured === false || $configured === null)
+                        ? $allmoments
                         : (int)$configured;
+                    $moduleinfo->{$field} = $mask;
+                    $checkbox = substr($field, strlen('review'));
+                    foreach ($moments as $when => $bit) {
+                        $moduleinfo->{$checkbox . $when} = ($mask & $bit) ? 1 : 0;
+                    }
                 }
                 $moduleinfo->questionsperpage = isset($params['questionsperpage'])
                     ? (int)$params['questionsperpage'] : 1;
@@ -536,6 +568,13 @@ class course_writer {
                     ? (int)(bool)$params['shuffleanswers'] : 1;
                 $moduleinfo->showuserpicture = 0;
                 $moduleinfo->showblocks = 0;
+                // Moodle's quiz_process_options() runs
+                // $quiz->password = $quiz->quizpassword and then unsets the latter. The two are named differently so a
+                // browser does not offer to remember the quiz password. Setting
+                // only the column left quizpassword undefined, PHP 8 read it as
+                // null, and quiz.password is NOT NULL with no default — every
+                // quiz failed with "Error writing to database".
+                $moduleinfo->quizpassword = '';
                 $moduleinfo->password = '';
                 $moduleinfo->subnet = '';
                 $moduleinfo->browsersecurity = '-';

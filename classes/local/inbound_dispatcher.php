@@ -101,6 +101,8 @@ class inbound_dispatcher {
         switch ($action) {
             case 'ping':
                 return self::ok(self::action_ping());
+            case 'describe_actions':
+                return self::ok(self::action_describe_actions());
             case 'disconnect_site':
             case 'revoke_registration':
                 return self::action_disconnect_site($params);
@@ -976,10 +978,13 @@ class inbound_dispatcher {
      * @return array
      */
     private static function action_upsert_section(array $params): array {
-        $courseid = (int)(self::param($params, 'course_id', 'courseId') ?? 0);
-        $sectionnum = (int)(self::param($params, 'section', 'section') ?? -1);
-        if ($courseid <= 0 || $sectionnum < 0) {
-            return self::deny(400, ['error' => 'missing_course_or_section']);
+        $courseid = (int)(self::param_any($params, ['course_id', 'courseId', 'courseid', 'course']) ?? 0);
+        $sectionnum = (int)(self::param_any($params, ['section', 'sectionnum', 'section_num', 'sectionNum']) ?? -1);
+        if ($courseid <= 0) {
+            return self::deny(400, ['error' => 'missing_course', 'detail' => 'Pass course_id (or courseid).']);
+        }
+        if ($sectionnum < 0) {
+            return self::deny(400, ['error' => 'missing_section', 'detail' => 'Pass section (or sectionnum), 0-based.']);
         }
         $fields = [];
         $coursefields = [
@@ -1013,10 +1018,35 @@ class inbound_dispatcher {
     }
 
     /**
+     * Publish the parameters this site's write actions accept.
+     *
+     * The equivalent of a web service's published signature, which a signed
+     * channel does not get for free. A caller can read this instead of
+     * guessing a spelling or matching against documentation written for a
+     * different plugin version — the answer comes from the same declaration
+     * the mapper uses, so it cannot drift from the behaviour.
+     *
+     * @return array
+     */
+    private static function action_describe_actions(): array {
+        return [
+            'plugin_version' => get_config('block_alphabees', 'version'),
+            'actions' => param_schema::describe(),
+        ];
+    }
+
+    /**
      * Bulk add or update course modules.
      *
      * Accepts a `modules` array; each entry is either { cmid, ... } for an
-     * update or { course, section, modname, ... } for a create.
+     * update or { section, modname, ... } for a create.
+     *
+     * The course id may be given **once at the top level** next to `modules`,
+     * the way upsert_course and upsert_section take it, and then applies to
+     * every entry that does not name its own. Until 3.1.1 it was read per
+     * entry only, so a batch addressed the way the sibling course actions are
+     * addressed was refused with a bare "invalidparameter" on every module —
+     * the writer's own explanation never left the server.
      *
      * @param array $params
      * @return array
@@ -1030,21 +1060,34 @@ class inbound_dispatcher {
         if (!$actor) {
             return self::deny(403, ['error' => 'no_actor_user']);
         }
+        $defaultcourse = self::param_any($params, ['course_id', 'courseId', 'courseid', 'course']);
 
         $results = [];
         foreach ($modules as $idx => $entry) {
             if (!is_array($entry)) {
-                $results[] = ['index' => $idx, 'ok' => false, 'error' => 'not_an_object'];
+                $results[] = [
+                    'index' => $idx,
+                    'ok' => false,
+                    'code' => 'not_an_object',
+                    'error' => 'Each modules[] entry must be an object.',
+                ];
+                continue;
+            }
+            $mapped = self::map_module_params($entry, $defaultcourse);
+            $warnings = self::module_entry_warnings($entry, $mapped);
+            $refusal = self::refuse_module_entry($mapped);
+            if ($refusal !== null) {
+                $results[] = array_merge(['index' => $idx, 'ok' => false], $refusal, ['warnings' => $warnings]);
                 continue;
             }
             try {
-                $mapped = self::map_module_params($entry);
                 $cm = self::run_as($actor, static function () use ($mapped) {
                     return course_writer::upsert_module($mapped);
                 });
                 $results[] = [
                     'index' => $idx,
                     'ok' => true,
+                    'warnings' => $warnings,
                     'cmid' => (int)$cm->id,
                     'course' => (int)$cm->course,
                     'section' => isset($cm->section) ? (int)$cm->section : null,
@@ -1056,7 +1099,8 @@ class inbound_dispatcher {
                     'index' => $idx,
                     'ok' => false,
                     'code' => $e instanceof \moodle_exception ? $e->errorcode : 'error',
-                    'error' => $e->getMessage(),
+                    'error' => self::exception_detail($e),
+                    'warnings' => $warnings,
                 ];
             }
         }
@@ -1069,10 +1113,15 @@ class inbound_dispatcher {
         $succeeded = count(array_filter($results, static function (array $r): bool {
             return !empty($r['ok']);
         }));
+        $summary = [
+            'total' => count($results),
+            'ok' => $succeeded,
+            'failed' => count($results) - $succeeded,
+        ];
         if ($succeeded === 0) {
-            return self::deny(422, ['results' => $results]);
+            return self::deny(422, ['results' => $results, 'summary' => $summary]);
         }
-        return self::ok(['results' => $results]);
+        return self::ok(['results' => $results, 'summary' => $summary]);
     }
 
     /**
@@ -1262,83 +1311,128 @@ class inbound_dispatcher {
     }
 
     /**
-     * Translate inbound module params to course_writer::upsert_module keys.
+     * Name the reason a module entry cannot be written, before course_writer
+     * turns it into a generic "invalidparameter".
      *
-     * @param array $entry
+     * The writer's message is a language string; its explanation lives in
+     * debuginfo, which Moodle suppresses outside PHPUnit. A caller therefore
+     * saw the same opaque error whether the course id, the modname or both
+     * were missing. These two checks are the ones a caller can act on, so they
+     * answer in the caller's own terms and name the accepted values.
+     *
+     * @param array $mapped Output of map_module_params().
+     * @return array|null ['code' => ..., 'error' => ...], or null when usable.
+     */
+    private static function refuse_module_entry(array $mapped): ?array {
+        if (!empty($mapped['cmid'])) {
+            // Update path: the cm carries its own course and type.
+            return null;
+        }
+        if (empty($mapped['course'])) {
+            return [
+                'code' => 'missing_course',
+                'error' => 'No course id. Pass course_id once next to modules, or per entry.',
+            ];
+        }
+        if (empty($mapped['modname'])) {
+            return [
+                'code' => 'missing_modname',
+                'error' => 'No modname. Supported: ' . implode(', ', course_writer::SUPPORTED_MODNAMES) . '.',
+            ];
+        }
+        return null;
+    }
+
+    /**
+     * Normalise the upload params to the keys file_uploader::upload() reads.
+     *
+     * Same rule as everywhere else on this channel: a caller may spell a
+     * parameter snake_case or camelCase. file_uploader reads the internal
+     * spelling only, so a `fileName` arrived as no filename at all and the
+     * upload was refused for a field the caller had in fact sent.
+     *
+     * @param array $params
      * @return array
      */
-    private static function map_module_params(array $entry): array {
-        // Every key a module type can consume has to be listed here: this is
-        // an allowlist, and anything missing is dropped before course_writer
-        // ever sees it — which produces a module that exists but was never
-        // filled in. Each entry is [internal key, snake_case, camelCase].
-        $fields = [
-            // Generic.
-            ['cmid', 'cmid', 'cmid'],
-            ['section', 'section', 'section'],
-            ['modname', 'modname', 'modname'],
-            ['name', 'name', 'name'],
-            ['intro', 'intro', 'intro'],
-            ['introformat', 'intro_format', 'introFormat'],
-            ['visible', 'visible', 'visible'],
-            ['showdescription', 'show_description', 'showDescription'],
-            ['display', 'display', 'display'],
-            ['grade', 'grade', 'grade'],
-            ['grademethod', 'grademethod', 'gradeMethod'],
-            ['files_itemid', 'files_itemid', 'filesItemId'],
-            // Page.
-            ['content', 'content', 'content'],
-            ['contentformat', 'content_format', 'contentFormat'],
-            // URL.
-            ['externalurl', 'external_url', 'externalUrl'],
-            // Folder.
-            ['showexpanded', 'show_expanded', 'showExpanded'],
-            // H5P activity.
-            ['displayoptions', 'displayoptions', 'displayOptions'],
-            ['enabletracking', 'enabletracking', 'enableTracking'],
-            ['reviewmode', 'reviewmode', 'reviewMode'],
-            // Assign.
-            ['duedate', 'duedate', 'dueDate'],
-            ['allowsubmissionsfromdate', 'allowsubmissionsfromdate', 'allowSubmissionsFromDate'],
-            ['cutoffdate', 'cutoffdate', 'cutoffDate'],
-            ['gradingduedate', 'gradingduedate', 'gradingDueDate'],
-            ['submissiondrafts', 'submissiondrafts', 'submissionDrafts'],
-            ['submission_onlinetext', 'submission_onlinetext', 'submissionOnlinetext'],
-            ['submission_file', 'submission_file', 'submissionFile'],
-            ['submission_file_maxfiles', 'submission_file_maxfiles', 'submissionFileMaxfiles'],
-            // Book.
-            ['numbering', 'numbering', 'numbering'],
-            ['navstyle', 'navstyle', 'navStyle'],
-            ['customtitles', 'customtitles', 'customTitles'],
-            ['chapters', 'chapters', 'chapters'],
-            // Forum.
-            ['forumtype', 'forumtype', 'forumType'],
-            ['forcesubscribe', 'forcesubscribe', 'forceSubscribe'],
-            ['discussions', 'discussions', 'discussions'],
-            // Glossary.
-            ['displayformat', 'displayformat', 'displayFormat'],
-            ['entries', 'entries', 'entries'],
-            // Quiz.
-            ['timeopen', 'timeopen', 'timeOpen'],
-            ['timeclose', 'timeclose', 'timeClose'],
-            ['timelimit', 'timelimit', 'timeLimit'],
-            ['preferredbehaviour', 'preferredbehaviour', 'preferredBehaviour'],
-            ['attempts', 'attempts', 'attempts'],
-            ['questionsperpage', 'questionsperpage', 'questionsPerPage'],
-            ['shuffleanswers', 'shuffleanswers', 'shuffleAnswers'],
-            ['questions', 'questions', 'questions'],
+    private static function map_upload_params(array $params): array {
+        $aliases = [
+            'filename' => ['filename', 'fileName', 'file_name'],
+            'content' => ['content', 'content_base64', 'contentBase64'],
+            'itemid' => ['itemid', 'itemId', 'item_id', 'draftitemid', 'draftItemId', 'draft_item_id'],
+            'filepath' => ['filepath', 'filePath', 'file_path'],
+            'contentisbase64' => ['contentisbase64', 'contentIsBase64', 'content_is_base64'],
         ];
-
-        $map = [
-            'course' => self::param($entry, 'course_id', 'courseId') ?? self::param($entry, 'course', 'course'),
-        ];
-        foreach ($fields as [$key, $snake, $camel]) {
-            $map[$key] = self::param($entry, $snake, $camel);
+        $map = [];
+        foreach ($aliases as $key => $spellings) {
+            $value = self::param_any($params, $spellings);
+            if ($value !== null) {
+                $map[$key] = $value;
+            }
         }
+        return $map;
+    }
 
-        return array_filter($map, function ($v) {
-            return $v !== null;
-        });
+    /**
+     * Translate inbound module params to course_writer::upsert_module keys.
+     *
+     * Reads param_schema rather than a list of its own. The previous
+     * hand-written allowlist had to be kept in step with course_writer by hand
+     * and twice was not, each time dropping a parameter the caller had sent.
+     *
+     * @param array $entry One element of the inbound `modules` array.
+     * @param mixed $defaultcourse Course id given once for the whole batch,
+     *                             used for entries that name none themselves.
+     * @return array
+     */
+    private static function map_module_params(array $entry, $defaultcourse = null): array {
+        $map = [];
+        foreach (param_schema::MODULE_PARAMS as $key => $declaration) {
+            $value = self::param_any($entry, $declaration['accepts']);
+            if ($value !== null) {
+                $map[$key] = $value;
+            }
+        }
+        // An entry may name its own course; otherwise the batch-level one
+        // applies. Core web services spell this courseid, our other course
+        // actions spell it course_id — accept both rather than refuse over an
+        // underscore.
+        $course = self::param_any($entry, param_schema::COURSE_ALIASES) ?? $defaultcourse;
+        if ($course !== null) {
+            $map['course'] = $course;
+        }
+        return $map;
+    }
+
+    /**
+     * Report what an entry sent that will have no effect.
+     *
+     * Dropping an unrecognised parameter in silence is how both of the import
+     * failures behaved, so the caller is told instead. These are warnings, not
+     * errors: a spelling we do not know must not stop a module being written,
+     * or a caller that sends one harmless extra field would be unable to
+     * publish at all.
+     *
+     * @param array $entry The raw inbound entry.
+     * @param array $mapped The recognised subset.
+     * @return string[] Human-readable notes, empty when nothing is odd.
+     */
+    private static function module_entry_warnings(array $entry, array $mapped): array {
+        $warnings = [];
+        foreach (array_keys($entry) as $given) {
+            if (param_schema::internal_key((string)$given) === null) {
+                $warnings[] = "Unknown parameter '{$given}' was ignored.";
+            }
+        }
+        $modname = isset($mapped['modname']) ? (string)$mapped['modname'] : '';
+        if ($modname !== '') {
+            $accepted = param_schema::keys_for($modname);
+            foreach (array_keys($mapped) as $key) {
+                if ($key !== 'course' && !in_array($key, $accepted, true)) {
+                    $warnings[] = "Parameter '{$key}' is not read by {$modname} and had no effect.";
+                }
+            }
+        }
+        return $warnings;
     }
 
     /**
@@ -1375,6 +1469,46 @@ class inbound_dispatcher {
             return $params[$camel];
         }
         return null;
+    }
+
+    /**
+     * Read the first of several accepted spellings of one parameter.
+     *
+     * param() takes exactly two, which is enough where we control both ends.
+     * The course id is not such a case: upsert_course and upsert_section have
+     * always taken it as course_id, core's own web services spell it courseid,
+     * and a caller reasonably tries either.
+     *
+     * @param array $params
+     * @param string[] $keys Accepted spellings, in order of preference.
+     * @return mixed|null Null when none of them is present.
+     */
+    private static function param_any(array $params, array $keys) {
+        foreach ($keys as $key) {
+            if (array_key_exists($key, $params)) {
+                return $params[$key];
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Failure detail for one entry of a batch, including the debuginfo that a
+     * moodle_exception keeps out of getMessage() outside PHPUnit.
+     *
+     * Without it the caller is told "Invalid parameter value detected" and has
+     * no way to learn which parameter — which is exactly the position the
+     * course generator was left in when upsert_modules refused every module.
+     *
+     * @param \Throwable $e
+     * @return string
+     */
+    private static function exception_detail(\Throwable $e): string {
+        $detail = $e->getMessage();
+        if ($e instanceof \moodle_exception && !empty($e->debuginfo)) {
+            $detail .= ' (' . $e->debuginfo . ')';
+        }
+        return $detail;
     }
 
     /**
@@ -1506,9 +1640,10 @@ class inbound_dispatcher {
         if (!$actor) {
             return self::deny(403, ['error' => 'no_actor_user']);
         }
+        $upload = self::map_upload_params($params);
         try {
-            $result = self::run_as($actor, static function () use ($params) {
-                return file_uploader::upload($params);
+            $result = self::run_as($actor, static function () use ($upload) {
+                return file_uploader::upload($upload);
             });
             return self::ok($result);
         } catch (\moodle_exception $e) {

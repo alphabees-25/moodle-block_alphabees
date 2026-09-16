@@ -66,6 +66,7 @@ final class action_policy {
      */
     private const SITE_ACTIONS = [
         'ping',
+        'describe_actions',
         'disconnect_site',
         'revoke_registration',
         'pause_site',

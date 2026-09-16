@@ -219,7 +219,7 @@ function xmldb_block_alphabees_upgrade(int $oldversion): bool {
         upgrade_block_savepoint(true, 2026090500, 'alphabees');
     }
 
-    // 3.2.0: the console. Adds the dedup log the notification path uses so a
+    // 3.1.0: the console. Adds the dedup log the notification path uses so a
     // backend retry cannot page a course team twice for the same event.
     if ($oldversion < 2026090501) {
         $table = new xmldb_table('block_alphabees_notifylog');
@@ -240,7 +240,7 @@ function xmldb_block_alphabees_upgrade(int $oldversion): bool {
         upgrade_block_savepoint(true, 2026090501, 'alphabees');
     }
 
-    // 3.2.0: the info texts moved behind a toggle and the block gained a name
+    // 3.1.0: the info texts moved behind a toggle and the block gained a name
     // of its own. Sites that already filled one of the four texts must keep
     // seeing them, so switch the toggle on for them rather than silently
     // reverting to the built-in wording.
