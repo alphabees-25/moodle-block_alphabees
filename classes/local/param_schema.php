@@ -128,7 +128,7 @@ class param_schema {
         'files_itemid' => [
             'accepts' => ['files_itemid', 'filesItemId'],
             'type' => 'itemid',
-            'modnames' => ['folder', 'resource', 'h5pactivity'],
+            'modnames' => ['folder', 'resource', 'h5pactivity', 'page'],
             'about' => 'Draft item id from upload_file.',
         ],
         'content' => [
@@ -196,6 +196,18 @@ class param_schema {
             'type' => 'timestamp',
             'modnames' => ['assign'],
             'about' => 'Unix timestamp, 0 for none.',
+        ],
+        'activity' => [
+            'accepts' => ['activity', 'activity_instructions', 'activityInstructions'],
+            'type' => 'html',
+            'modnames' => ['assign'],
+            'about' => 'Activity instructions, shown once a learner starts. Separate from intro.',
+        ],
+        'activityformat' => [
+            'accepts' => ['activity_format', 'activityFormat'],
+            'type' => 'int',
+            'modnames' => ['assign'],
+            'about' => 'Format of activity. 1 = HTML.',
         ],
         'submissiondrafts' => [
             'accepts' => ['submissiondrafts', 'submissionDrafts'],

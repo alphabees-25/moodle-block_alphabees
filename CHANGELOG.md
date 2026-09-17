@@ -5,6 +5,14 @@ follow the plugin's `release` string in `version.php`.
 
 This file starts at 3.1.0, the first release published after 3.0.3.
 
+## 3.1.2 — 2026-09-17
+
+- Pages generated in the portal now carry their body text. The page was
+  created, the text was discarded, and Moodle showed an empty page.
+- Images inside a generated page body are stored with the page instead of
+  disappearing later.
+- Assignments can carry activity instructions alongside the description.
+
 ## 3.1.1 — 2026-09-16
 
 Courses generated in the Alphabees portal now arrive in Moodle complete.

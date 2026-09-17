@@ -395,9 +395,22 @@ class course_writer {
 
         switch ($moduleinfo->modulename) {
             case 'page':
+                // Moodle's page_add_instance() translates the editor array
+                // into the columns only when it was handed a form — the body
+                // of that translation is "if ($mform) { $data->content =
+                // $data->page['text']; }". add_moduleinfo() passes no form, so
+                // setting only the editor shape created a page whose body
+                // silently stayed empty: the array is not a column, so
+                // insert_record dropped it without a word. The columns are
+                // written directly; the editor array is kept alongside so a
+                // path that does carry a form arrives at the same result.
+                $content = isset($params['content']) ? (string)$params['content'] : '';
+                $contentformat = isset($params['contentformat']) ? (int)$params['contentformat'] : FORMAT_HTML;
+                $moduleinfo->content = $content;
+                $moduleinfo->contentformat = $contentformat;
                 $moduleinfo->page = [
-                    'text' => isset($params['content']) ? (string)$params['content'] : '',
-                    'format' => isset($params['contentformat']) ? (int)$params['contentformat'] : FORMAT_HTML,
+                    'text' => $content,
+                    'format' => $contentformat,
                     'itemid' => 0,
                 ];
                 $moduleinfo->display = isset($params['display']) ? (int)$params['display'] : RESOURCELIB_DISPLAY_AUTO;
@@ -466,13 +479,20 @@ class course_writer {
                 $moduleinfo->attemptreopenmethod = 'none';
                 $moduleinfo->maxattempts = -1;
                 $moduleinfo->grade = isset($params['grade']) ? (int)$params['grade'] : 100;
+                // Assignments carry a second body beside the description: the
+                // activity instructions, shown once a learner has started. Core
+                // only fills it from an editor array it was handed by a form, so
+                // the columns are written directly — the same reason page does.
+                $moduleinfo->activity = isset($params['activity']) ? (string)$params['activity'] : '';
+                $moduleinfo->activityformat = isset($params['activityformat'])
+                    ? (int)$params['activityformat'] : FORMAT_HTML;
                 // Submission plugins read their own prefixed settings; they are
                 // set explicitly because a missing one silently disables the
                 // plugin rather than falling back to the site default.
                 $onlinetext = !isset($params['submission_onlinetext'])
                     || (bool)$params['submission_onlinetext'];
                 $moduleinfo->assignsubmission_onlinetext_enabled = (int)$onlinetext;
-                $moduleinfo->assignsubmission_onlinetext_wordlimitenabled = 0;
+                $moduleinfo->assignsubmission_onlinetext_wordlimit_enabled = 0;
                 $moduleinfo->assignsubmission_onlinetext_wordlimit = 0;
                 $filesubmission = !empty($params['submission_file']);
                 $moduleinfo->assignsubmission_file_enabled = (int)$filesubmission;
@@ -659,7 +679,48 @@ class course_writer {
             case 'quiz':
                 self::write_quiz_questions($cm, $params);
                 break;
+            case 'page':
+                self::attach_page_files($cm, $params);
+                break;
         }
+    }
+
+    /**
+     * Move files a page's body references out of the draft area.
+     *
+     * page_add_instance() runs file_save_draft_area_files only when it was
+     * given a form, so a page pushed with an image in it would keep pointing at
+     * a draft area that is cleaned up later — the body would render with broken
+     * images some time after the import looked successful. Doing it here makes
+     * an uploaded image as durable as one added by hand.
+     *
+     * Only runs when the caller passed a files_itemid; a page whose body has no
+     * files needs nothing.
+     *
+     * @param \stdClass $cm
+     * @param array $params files_itemid: draft item id from upload_file.
+     * @return void
+     */
+    private static function attach_page_files(\stdClass $cm, array $params): void {
+        global $CFG, $DB;
+        require_once($CFG->dirroot . '/mod/page/locallib.php');
+
+        $draftitemid = isset($params['files_itemid']) ? (int)$params['files_itemid'] : 0;
+        if ($draftitemid <= 0) {
+            return;
+        }
+        $context = \context_module::instance($cm->id);
+        $page = $DB->get_record('page', ['id' => $cm->instance], '*', MUST_EXIST);
+        $page->content = file_save_draft_area_files(
+            $draftitemid,
+            $context->id,
+            'mod_page',
+            'content',
+            0,
+            page_get_editor_options($context),
+            $page->content
+        );
+        $DB->update_record('page', $page);
     }
 
     /**
