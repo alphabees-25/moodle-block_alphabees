@@ -48,6 +48,13 @@ class param_schema {
     public const COURSE_ALIASES = ['course_id', 'courseId', 'courseid', 'course'];
 
     /**
+     * Spellings of a user id.
+     *
+     * @var string[]
+     */
+    public const USER_ALIASES = ['userid', 'user_id', 'userId'];
+
+    /**
      * Every module parameter: internal key => how it is spelled, what it holds,
      * which module types read it, and what it is for.
      *
@@ -427,6 +434,22 @@ class param_schema {
                     'visible' => ['accepts' => ['visible'], 'type' => 'bool'],
                 ],
                 'required' => ['course_id', 'section'],
+            ],
+            'get_user_access' => [
+                'about' => 'Activities and sections the user cannot open in the course, as Moodle decides '
+                    . 'for that user: hidden, restricted by any availability condition, or inside a '
+                    . 'blocked section. 404 user_not_found / course_not_found.',
+                'params' => [
+                    'courseid' => ['accepts' => self::COURSE_ALIASES, 'type' => 'int'],
+                    'userid' => ['accepts' => self::USER_ALIASES, 'type' => 'int'],
+                ],
+                'required' => ['courseid', 'userid'],
+                'returns' => [
+                    'courseid' => 'int',
+                    'userid' => 'int',
+                    'blocked_cmids' => 'list of course module ids',
+                    'blocked_sections' => 'list of {id: course_sections.id, section: section number}',
+                ],
             ],
             'upload_file' => [
                 'about' => 'Put one file into a draft area. Pass the returned itemid as files_itemid.',

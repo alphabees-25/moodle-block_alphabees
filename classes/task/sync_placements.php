@@ -29,6 +29,7 @@ namespace block_alphabees\task;
 use block_alphabees\local\backend_client;
 use block_alphabees\local\placement_repository;
 use block_alphabees\local\site_registry;
+use block_alphabees\local\ws_setup;
 
 /**
  * Scheduled task that syncs the full placement snapshot to the backend.
@@ -49,6 +50,8 @@ class sync_placements extends \core\task\scheduled_task {
      * @return void
      */
     public function execute(): void {
+        $this->repair_service_user();
+
         if (site_registry::is_registration_blocked()) {
             mtrace('[block_alphabees] sync_placements: registration blocked for current API key, skipping.');
             return;
@@ -99,5 +102,30 @@ class sync_placements extends \core\task\scheduled_task {
         }
         mtrace('[block_alphabees] sync_placements: permanent failure http='
             . $httpcode . ' err=' . $error);
+    }
+
+    /**
+     * Keep the service user callable.
+     *
+     * A profile field made mandatory after the site connected, or a Moodle
+     * upgrade to a release that wants the account's auth plugin enabled, turns
+     * every token request into a refusal. Nothing fails on this side when that
+     * happens; the backend's sync simply stops. Runs before the registration
+     * checks because it is about the local account, not about the backend, and
+     * must not take the heartbeat down with it.
+     *
+     * @return void
+     */
+    private function repair_service_user(): void {
+        try {
+            $open = ws_setup::repair_service_user();
+        } catch (\Throwable $e) {
+            mtrace('[block_alphabees] sync_placements: service user check failed: ' . $e->getMessage());
+            return;
+        }
+        if ($open) {
+            mtrace('[block_alphabees] sync_placements: service user has required profile fields'
+                . ' that could not be filled automatically: ' . implode(', ', $open));
+        }
     }
 }

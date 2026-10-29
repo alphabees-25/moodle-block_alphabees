@@ -38,7 +38,8 @@ class cleanup_nonces extends \core\task\scheduled_task {
     }
 
     /**
-     * Delete expired replay nonces and spent notification dedup keys.
+     * Delete expired replay nonces, spent notification dedup keys and the
+     * records of sessions that timed out.
      *
      * @return void
      */
@@ -49,6 +50,14 @@ class cleanup_nonces extends \core\task\scheduled_task {
         $purged = \block_alphabees\local\notifier::purge_expired_log();
         if ($purged > 0) {
             mtrace('[block_alphabees] cleanup: removed ' . $purged . ' expired notification dedup key(s).');
+        }
+        $old = \block_alphabees\local\completion_events::purge_stale();
+        if ($old > 0) {
+            mtrace('[block_alphabees] cleanup: dropped ' . $old . ' completion event(s) that could not be delivered.');
+        }
+        $stale = \block_alphabees\local\session_tracker::purge_stale();
+        if ($stale > 0) {
+            mtrace('[block_alphabees] cleanup: forgot ' . $stale . ' idle widget session(s).');
         }
     }
 }

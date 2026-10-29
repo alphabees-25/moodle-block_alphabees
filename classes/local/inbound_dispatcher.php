@@ -138,6 +138,10 @@ class inbound_dispatcher {
                 return self::action_upload_file($params);
             case 'list_h5p_libraries':
                 return self::action_list_h5p_libraries($params);
+            case 'list_generico_templates':
+                return self::action_list_generico_templates($params);
+            case 'get_user_access':
+                return self::action_get_user_access($params);
             case 'notify':
                 return self::action_notify($params);
             case 'console_context':
@@ -261,6 +265,7 @@ class inbound_dispatcher {
         return [
             'plugin_version' => $plugin->release ?? null,
             'plugin_version_code' => $plugin->version ?? null,
+            'capabilities' => plugin_features::list(),
             'placement_count' => count(placement_repository::all_instances()),
             'key_id' => site_registry::key_id(),
             'backend_key_id' => site_registry::backend_key_id(),
@@ -1029,8 +1034,13 @@ class inbound_dispatcher {
      * @return array
      */
     private static function action_describe_actions(): array {
+        $version = plugin_features::version();
         return [
+            // Historically the installed version code, under this name.
             'plugin_version' => get_config('block_alphabees', 'version'),
+            'plugin_version_code' => $version['version'],
+            'plugin_release' => $version['release'],
+            'capabilities' => plugin_features::list(),
             'actions' => param_schema::describe(),
         ];
     }
@@ -1556,6 +1566,54 @@ class inbound_dispatcher {
         } catch (\moodle_exception $e) {
             return self::deny(400, ['code' => $e->errorcode]);
         }
+    }
+
+    /**
+     * Describe the Generico filter templates configured on this site.
+     *
+     * Generico has no web-service functions, and a web-service read of course
+     * content returns the expanded output, never the tag, so this is the only
+     * way for the backend to learn which {GENERICO:...} tags exist and what
+     * they take. See local\generico_reader.
+     *
+     * @param array $params Optionally keys[], include_bodies (default true), course_id.
+     * @return array
+     */
+    private static function action_list_generico_templates(array $params): array {
+        $keys = self::param($params, 'keys', 'templateKeys') ?? self::param($params, 'template_keys', 'templatekeys');
+        $keys = is_array($keys) ? array_map(static fn($k) => clean_param((string)$k, PARAM_ALPHANUMEXT), $keys) : [];
+        $bodies = self::param($params, 'include_bodies', 'includeBodies');
+        $courseid = (int)(self::param($params, 'course_id', 'courseId') ?? 0);
+        return self::ok(generico_reader::describe($keys, $bodies === null || !empty($bodies), $courseid));
+    }
+
+    /**
+     * Activities and sections one learner cannot open in one course.
+     *
+     * Moodle evaluates every rule for that learner (see user_access), so the
+     * backend can keep restricted material out of what the agent searches and
+     * says. courseid and userid are echoed so a caller can discard an answer
+     * meant for someone else.
+     *
+     * @param array $params courseid and userid, both required.
+     * @return array
+     */
+    private static function action_get_user_access(array $params): array {
+        global $DB;
+        $courseid = (int)(self::param_any($params, param_schema::COURSE_ALIASES) ?? 0);
+        $userid = (int)(self::param_any($params, param_schema::USER_ALIASES) ?? 0);
+        if ($courseid <= 0 || $userid <= 0) {
+            return self::deny(400, ['error' => 'missing_params']);
+        }
+        $user = \core_user::get_user($userid, 'id, deleted', IGNORE_MISSING);
+        if (!$user || $user->deleted) {
+            return self::deny(404, ['error' => 'user_not_found']);
+        }
+        $course = $DB->get_record('course', ['id' => $courseid]);
+        if (!$course) {
+            return self::deny(404, ['error' => 'course_not_found']);
+        }
+        return self::ok(['courseid' => $courseid, 'userid' => $userid] + user_access::blocked($course, $userid));
     }
 
     /**

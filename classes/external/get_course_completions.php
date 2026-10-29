@@ -17,7 +17,9 @@
 /**
  * Course completion overview for every tracked user of one course.
  *
- * One call per course instead of one core_completion_* call per user.
+ * One call per course instead of one core_completion_* call per user, or one
+ * call per page of learners: a course of several thousand did not finish
+ * within the backend's timeout, because the percentage is computed per user.
  * The percentage is computed with the same core helper the Moodle UI uses
  * (\core_completion\progress::get_course_progress_percentage) so numbers
  * match what learners see in their course overview.
@@ -59,6 +61,8 @@ class get_course_completions extends external_api {
     public static function execute_parameters(): external_function_parameters {
         return new external_function_parameters([
             'courseid' => new external_value(PARAM_INT, 'Course id.'),
+            'limitfrom' => new external_value(PARAM_INT, 'Offset into the learners, ordered by user id.', VALUE_DEFAULT, 0),
+            'limitnum' => new external_value(PARAM_INT, 'Learners per page; 0 for all.', VALUE_DEFAULT, 0),
         ]);
     }
 
@@ -66,12 +70,18 @@ class get_course_completions extends external_api {
      * Return completion state for every user tracked in the course.
      *
      * @param int $courseid
+     * @param int $limitfrom
+     * @param int $limitnum
      * @return array
      */
-    public static function execute(int $courseid): array {
+    public static function execute(int $courseid, int $limitfrom = 0, int $limitnum = 0): array {
         global $CFG, $DB;
 
-        $params = self::validate_parameters(self::execute_parameters(), ['courseid' => $courseid]);
+        $params = self::validate_parameters(self::execute_parameters(), [
+            'courseid' => $courseid,
+            'limitfrom' => $limitfrom,
+            'limitnum' => $limitnum,
+        ]);
 
         $systemcontext = \context_system::instance();
         self::validate_context($systemcontext);
@@ -86,24 +96,24 @@ class get_course_completions extends external_api {
 
         // Same population as Moodle's own completion reports: active
         // enrolments holding moodle/course:isincompletionreports (students).
-        $users = get_enrolled_users(
-            $coursecontext,
-            'moodle/course:isincompletionreports',
-            0,
-            'u.id',
-            'u.id ASC',
-            0,
-            0,
-            true
-        );
+        $users = \block_alphabees\local\learner_page::users($coursecontext, $params['limitfrom'], $params['limitnum']);
         if (empty($users)) {
             return [];
         }
 
-        // Bulk-load course_completions rows (started / completed timestamps).
-        $records = $enabled
-            ? $DB->get_records('course_completions', ['course' => $course->id], '', 'userid, timestarted, timecompleted')
-            : [];
+        // Bulk-load course_completions rows (started / completed timestamps)
+        // for this page only.
+        $records = [];
+        if ($enabled) {
+            [$insql, $inparams] = $DB->get_in_or_equal(array_keys($users), SQL_PARAMS_NAMED, 'u');
+            $records = $DB->get_records_select(
+                'course_completions',
+                'course = :course AND userid ' . $insql,
+                ['course' => $course->id] + $inparams,
+                '',
+                'userid, timestarted, timecompleted'
+            );
+        }
 
         $result = [];
         foreach ($users as $user) {

@@ -480,12 +480,18 @@ class course_writer {
                 $moduleinfo->maxattempts = -1;
                 $moduleinfo->grade = isset($params['grade']) ? (int)$params['grade'] : 100;
                 // Assignments carry a second body beside the description: the
-                // activity instructions, shown once a learner has started. Core
-                // only fills it from an editor array it was handed by a form, so
-                // the columns are written directly — the same reason page does.
-                $moduleinfo->activity = isset($params['activity']) ? (string)$params['activity'] : '';
-                $moduleinfo->activityformat = isset($params['activityformat'])
-                    ? (int)$params['activityformat'] : FORMAT_HTML;
+                // activity instructions, shown once a learner has started.
+                // Unlike page, assign builds its own row and fills this column
+                // from the editor array alone. A plain ->activity is never
+                // copied, which is how the instructions were dropped without a
+                // word until 3.1.3. Set only when the caller sent some, so an
+                // update that does not mention them leaves the stored text alone.
+                if (isset($params['activity'])) {
+                    $moduleinfo->activityeditor = [
+                        'text' => (string)$params['activity'],
+                        'format' => isset($params['activityformat']) ? (int)$params['activityformat'] : FORMAT_HTML,
+                    ];
+                }
                 // Submission plugins read their own prefixed settings; they are
                 // set explicitly because a missing one silently disables the
                 // plugin rather than falling back to the site default.

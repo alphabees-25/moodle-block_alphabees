@@ -85,6 +85,8 @@ final class action_policy {
         'set_activity_completion',
         'upload_file',
         'list_h5p_libraries',
+        'list_generico_templates',
+        'get_user_access',
         'notify',
     ];
 

@@ -79,6 +79,51 @@ $functions = [
         'type' => 'read',
         'ajax' => false,
     ],
+    'block_alphabees_discover_progress_sources' => [
+        'classname' => 'block_alphabees\\external\\discover_progress_sources',
+        'methodname' => 'execute',
+        'description' => 'Which progress sources the site has (course completion, Completion Progress, '
+            . 'competencies), in counts only.',
+        'type' => 'read',
+        'ajax' => false,
+    ],
+    'block_alphabees_get_progress_trackers' => [
+        'classname' => 'block_alphabees\\external\\get_progress_trackers',
+        'methodname' => 'execute',
+        'description' => 'Completion Progress bars of one course and each learner\'s state on them, '
+            . 'one page of learners per call.',
+        'type' => 'read',
+        'ajax' => false,
+    ],
+    'block_alphabees_get_rendered_course_texts' => [
+        'classname' => 'block_alphabees\\external\\get_rendered_course_texts',
+        'methodname' => 'execute',
+        'description' => 'Course texts containing filter tags, rendered as a learner\'s page shows them, '
+            . 'for a neutral viewer.',
+        'type' => 'read',
+        'ajax' => false,
+    ],
+    'block_alphabees_get_course_grades' => [
+        'classname' => 'block_alphabees\\external\\get_course_grades',
+        'methodname' => 'execute',
+        'description' => 'Each learner\'s user grade report as they see it, one page of learners per call.',
+        'type' => 'read',
+        'ajax' => false,
+    ],
+    'block_alphabees_get_course_fields' => [
+        'classname' => 'block_alphabees\\external\\get_course_fields',
+        'methodname' => 'execute',
+        'description' => 'Course custom fields with their visibility and displayed value.',
+        'type' => 'read',
+        'ajax' => false,
+    ],
+    'block_alphabees_describe_functions' => [
+        'classname' => 'block_alphabees\\external\\describe_functions',
+        'methodname' => 'execute',
+        'description' => 'JSON Schemas of the parameters and return values of every function in this service.',
+        'type' => 'read',
+        'ajax' => false,
+    ],
 
     // The console's entrance into the action registry, called from the browser
     // of a signed-in user. Deliberately absent from the service below: a
@@ -180,6 +225,12 @@ $services = [
             'block_alphabees_get_user_calendar',
             'block_alphabees_get_course_completions',
             'block_alphabees_get_quiz_questions',
+            'block_alphabees_discover_progress_sources',
+            'block_alphabees_get_progress_trackers',
+            'block_alphabees_get_rendered_course_texts',
+            'block_alphabees_get_course_grades',
+            'block_alphabees_get_course_fields',
+            'block_alphabees_describe_functions',
 
             'core_enrol_get_users_courses',
             'core_enrol_get_enrolled_users',

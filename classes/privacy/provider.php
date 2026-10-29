@@ -17,8 +17,10 @@
 /**
  * Privacy declaration for block_alphabees.
  *
- * The plugin keeps no personal data in Moodle's own tables — its two tables
- * hold replay nonces and delivery counters, neither tied to a person. What it
+ * The plugin keeps no personal data in Moodle's own tables. They hold replay
+ * nonces, delivery counters and, per browser session that loaded the widget,
+ * two hashes with no user id beside them, removed at logout or once the
+ * session has expired. None is tied to a person. What it
  * does do is exchange personal data with the Alphabees backend, both for the
  * learner using the tutor and for the teacher answering in the console, so the
  * declaration below describes that transfer.
@@ -48,8 +50,15 @@ class provider implements \core_privacy\local\metadata\provider {
             [
                 'userid' => 'privacy:metadata:alphabees_backend:userid',
                 'courseid' => 'privacy:metadata:alphabees_backend:courseid',
+                'completion' => 'privacy:metadata:alphabees_backend:completion',
+                'grades' => 'privacy:metadata:alphabees_backend:grades',
                 'message' => 'privacy:metadata:alphabees_backend:message',
                 'firstname' => 'privacy:metadata:alphabees_backend:firstname',
+                'sessionend' => 'privacy:metadata:alphabees_backend:sessionend',
+                'access' => 'privacy:metadata:alphabees_backend:access',
+                'profile' => 'privacy:metadata:alphabees_backend:profile',
+                'activity' => 'privacy:metadata:alphabees_backend:activity',
+                'adminemail' => 'privacy:metadata:alphabees_backend:adminemail',
             ],
             'privacy:metadata:alphabees_backend'
         );

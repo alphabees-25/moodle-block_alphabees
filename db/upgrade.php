@@ -260,5 +260,83 @@ function xmldb_block_alphabees_upgrade(int $oldversion): bool {
         upgrade_block_savepoint(true, 2026090901, 'alphabees');
     }
 
+    // 3.1.3: two ways the service user ends up refused on every token request.
+    // On a site with a required custom profile field it was created without a
+    // value for it ("usernotfullysetup"); and since Moodle 5.3 its auth plugin
+    // has to be enabled ("wsaccessusernologin"). Repair both now so the upgrade
+    // alone fixes an affected site; the token is untouched, so nothing has to
+    // be reconnected.
+    if ($oldversion < 2026100500) {
+        try {
+            \block_alphabees\local\ws_setup::repair_service_user();
+        } catch (\Throwable $e) {
+            debugging('[block_alphabees] upgrade 2026100500 service user repair skipped: '
+                . $e->getMessage(), DEBUG_DEVELOPER);
+        }
+        upgrade_block_savepoint(true, 2026100500, 'alphabees');
+    }
+
+    // 3.1.4: sessions that loaded the widget, so a logout can be reported to
+    // al-tutor. Hashes only: of the PHP session id, and of sesskey|wwwroot.
+    if ($oldversion < 2026101600) {
+        $table = new xmldb_table('block_alphabees_sessions');
+        $table->add_field('id', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
+        $table->add_field('sidhash', XMLDB_TYPE_CHAR, '64', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('sessionhash', XMLDB_TYPE_CHAR, '64', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('timemodified', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+        $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+        $table->add_index('sidhash_uniq', XMLDB_INDEX_UNIQUE, ['sidhash']);
+        $table->add_index('timemodified_idx', XMLDB_INDEX_NOTUNIQUE, ['timemodified']);
+
+        if (!$dbman->table_exists($table)) {
+            $dbman->create_table($table);
+        }
+
+        upgrade_block_savepoint(true, 2026101600, 'alphabees');
+    }
+
+    // 3.2.0: five new web-service functions (progress sources, Completion
+    // Progress trackers, rendered course texts, course grades, course fields).
+    // Core adds them to the service from db/services.php; the refresh also
+    // repairs a service row that was edited by hand. Token stays unchanged.
+    if ($oldversion < 2026101800) {
+        try {
+            \block_alphabees\local\ws_setup::refresh_enabled_integration_for_upgrade();
+        } catch (\Throwable $e) {
+            debugging('[block_alphabees] upgrade 2026101800 service refresh skipped: '
+                . $e->getMessage(), DEBUG_DEVELOPER);
+        }
+        upgrade_block_savepoint(true, 2026101800, 'alphabees');
+    }
+
+    // 3.2.0: outbox for completion changes, sent to the backend in batches.
+    if ($oldversion < 2026102000) {
+        $table = new xmldb_table('block_alphabees_outbox');
+        $table->add_field('id', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
+        $table->add_field('kind', XMLDB_TYPE_CHAR, '32', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('payload', XMLDB_TYPE_TEXT, null, null, XMLDB_NOTNULL, null, null);
+        $table->add_field('timecreated', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+        $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+        $table->add_index('kind_idx', XMLDB_INDEX_NOTUNIQUE, ['kind']);
+        $table->add_index('timecreated_idx', XMLDB_INDEX_NOTUNIQUE, ['timecreated']);
+
+        if (!$dbman->table_exists($table)) {
+            $dbman->create_table($table);
+        }
+
+        upgrade_block_savepoint(true, 2026102000, 'alphabees');
+    }
+
+    // 3.2.0: block_alphabees_describe_functions joins the service.
+    if ($oldversion < 2026102001) {
+        try {
+            \block_alphabees\local\ws_setup::refresh_enabled_integration_for_upgrade();
+        } catch (\Throwable $e) {
+            debugging('[block_alphabees] upgrade 2026102001 service refresh skipped: '
+                . $e->getMessage(), DEBUG_DEVELOPER);
+        }
+        upgrade_block_savepoint(true, 2026102001, 'alphabees');
+    }
+
     return true;
 }

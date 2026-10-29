@@ -130,6 +130,9 @@ class mobile {
         // Real user ID, as requested.
         $userid = (int)$USER->id;
 
+        // Same course names as the web block sends.
+        $courselabel = \block_alphabees\local\course_label::of($courseid);
+
         // Opt-in (site setting, default off): first name only, for display
         // and personal address in the widget. Empty string when disabled.
         $userfirstname = get_config('block_alphabees', 'send_userprofile')
@@ -159,6 +162,8 @@ class mobile {
             'helplabel'  => $helplabel,
             'helptext'   => $helptext,
             'courseid'   => $courseid,
+            'coursename' => $courselabel['name'],
+            'courseshortname' => $courselabel['shortname'],
             'botid'      => (string)$botid,
             'apikey'     => (string)$apikey,
             'userid'     => $userid,

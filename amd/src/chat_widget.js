@@ -51,7 +51,7 @@ define([
                     }
                     return String(state.sessionId || state.session_id || state.conversationId || state.conversation_id || "");
                 };
-                const emitMoodleContextEvent = function (payload, reason) {
+                const emitMoodleContextEvent = function (payload, reason, previousCourseId) {
                     const eventPayload = {
                         eventType: "moodle.context.changed",
                         reason: reason || "init",
@@ -60,6 +60,9 @@ define([
                         sessionId: currentSessionId(),
                         data: payload
                     };
+                    if (typeof previousCourseId === "number") {
+                        eventPayload.previousCourseId = previousCourseId;
+                    }
                     window.postMessage({ type: "alMoodleContextChanged", data: eventPayload }, "*");
                     if (typeof window.CustomEvent === "function") {
                         window.dispatchEvent(new CustomEvent("alphabees:moodle-context-changed", {
@@ -70,6 +73,8 @@ define([
                 const userId = Number((ctx && ctx.userid) || 0) || 0;
                 const context = {
                     courseId: Number((ctx && ctx.courseid) || 0) || 0,
+                    courseName: (ctx && ctx.coursename) ? String(ctx.coursename) : "",
+                    courseShortname: (ctx && ctx.courseshortname) ? String(ctx.courseshortname) : "",
                     sectionId: Number((ctx && ctx.sectionid) || 0) || 0,
                     sectionNum: Number((ctx && ctx.sectionnum) || 0) || 0,
                     contextId: Number((ctx && ctx.contextid) || 0) || 0,
@@ -100,6 +105,14 @@ define([
                     payload.userProfile = { firstName: String(ctx.userprofile.firstName) };
                 }
 
+                // This Moodle session, as sha256(sesskey|wwwroot). The plugin
+                // reports the same hash when the user logs out, so al-tutor can
+                // end the tutor session. Stable for the session, so it stays in
+                // the navigation pushes too.
+                if (ctx && ctx.sessionhash) {
+                    payload.sessionHash = String(ctx.sessionhash);
+                }
+
                 // Deep link from a Moodle notification: open this exercise or
                 // thread. Top-level like userId, deliberately not inside
                 // 'context' — it is an instruction to the UI, not material for
@@ -114,6 +127,23 @@ define([
                 _loadAlChat(payload);
                 window.postMessage({ type: "alUpdateState", data: payload }, "*");
                 emitMoodleContextEvent(payload, "init");
+
+                // Every Moodle page load runs init again, so the full payload
+                // above already goes out on each page. A different course than
+                // on the previous page in this tab additionally gets its own
+                // event naming the course it came from. sessionStorage, because
+                // a page load starts a fresh window; it may be unavailable.
+                let previousCourseId = null;
+                try {
+                    const stored = window.sessionStorage.getItem("alphabees:lastCourseId");
+                    previousCourseId = stored === null ? null : (Number(stored) || 0);
+                    window.sessionStorage.setItem("alphabees:lastCourseId", String(context.courseId));
+                } catch (e) {
+                    previousCourseId = null;
+                }
+                if (previousCourseId !== null && previousCourseId !== context.courseId) {
+                    emitMoodleContextEvent(payload, "course_changed", previousCourseId);
+                }
 
                 if (!window.__alphabeesMoodleContextWatcher) {
                     window.__alphabeesMoodleContextWatcher = true;

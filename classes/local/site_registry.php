@@ -49,8 +49,8 @@ class site_registry {
      * appending API_BASE + route paths below. For example, registration is:
      *   https://api.alphalearn.ai/al/tutors/v1/moodle/register
      *
-     * ALPHABEES_ENV_SWITCH — currently PROD. For development work switch to
-     * the DEV line and rebuild:
+     * ALPHABEES_ENV_SWITCH — currently PROD. For a release switch to
+     * the PROD line and rebuild:
      *   PROD: https://api.alphalearn.ai
      *   DEV:  https://lassedesk.top
      * Grep ALPHABEES_ENV_SWITCH for the other places: CONSOLE_BUNDLE_URL
@@ -77,8 +77,8 @@ class site_registry {
      * Until it is published for an environment the console page degrades to a
      * notice, so a missing bundle is a visible but harmless state.
      *
-     * ALPHABEES_ENV_SWITCH — currently PROD. For development work switch to
-     * the DEV line:
+     * ALPHABEES_ENV_SWITCH — currently PROD. For a release switch to
+     * the PROD line:
      *   PROD: https://chat.alphalearn.ai/console-widget.js
      *   DEV:  https://chat.alphabees.de/development/console-widget.js
      */
@@ -121,6 +121,26 @@ class site_registry {
     public static function path_lifecycle(): string {
         return self::API_BASE . '/v1/moodle/sites/'
             . rawurlencode(self::site_identifier()) . '/lifecycle';
+    }
+
+    /**
+     * Return the completion endpoint path for this site (batches of completion.updated).
+     *
+     * @return string
+     */
+    public static function path_completions(): string {
+        return self::API_BASE . '/v1/moodle/sites/'
+            . rawurlencode(self::site_identifier()) . '/completions';
+    }
+
+    /**
+     * Return the session endpoint path for this site (session.ended on logout).
+     *
+     * @return string
+     */
+    public static function path_sessions(): string {
+        return self::API_BASE . '/v1/moodle/sites/'
+            . rawurlencode(self::site_identifier()) . '/sessions';
     }
 
     /**

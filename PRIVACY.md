@@ -1,92 +1,102 @@
-# Privacy Policy for Alphabees Moodle Plugin  
+# Privacy Policy for the Alphabees Moodle Plugin
 
-## Introduction  
+## Introduction
 
-The **Alphabees Moodle Plugin** enhances Moodle with AI-powered functionalities while maintaining a strong commitment to data protection and user privacy. We strictly comply with GDPR and other relevant data protection regulations, ensuring that all data is processed securely and transparently.  
+The **Alphabees Moodle Plugin** (`block_alphabees`) adds the Alphabees AI tutor
+to Moodle. To answer learners in the context of their course, the plugin
+exchanges data with the Alphabees backend. This document lists what that data
+is, when it leaves Moodle, and how it is protected.
 
----
-
-## Data Collection  
-
-- **No Personal Data**:  
-  - We do not collect or store Moodle user IDs or any other personal information about users.  
-  - The plugin processes chat history on a session basis using a non-personal session ID, which is deleted after the session ends.  
-
-- **Chat History**:  
-  - Chat interactions are processed temporarily during the session to provide AI-powered responses.  
-  - No chat history or user-specific data is stored permanently.  
+The same list is part of the plugin's privacy declaration in Moodle
+(*Site administration › Users › Privacy and policies › Plugin privacy registry*).
 
 ---
 
-## Data Storage and Transmission  
+## What the plugin sends to Alphabees
 
-- **Encrypted Data**:  
-  - Data at rest is encrypted using **AES-256** encryption.  
-  - Data in transit is encrypted using **TLS 1.2+** to ensure secure communication.  
+Nothing is sent until an administrator enters an Alphabees API key.
 
-- **Server Locations**:  
-  - Our servers are hosted by **Contabo GmbH** in Munich and operate exclusively within German or European data centers.  
-  - We comply fully with GDPR requirements, ensuring data protection and security.  
+**When the site connects**
 
-- **No AI Training**:  
-  - Client data, including chat interactions and uploaded files, is not used to train AI models.  
+- The site's name and address, the Moodle and plugin version, and the email
+  address of the main administrator.
 
-- **Data Processing Agreements**:  
-  - We maintain data processing agreements with Contabo GmbH to ensure compliance with GDPR and other applicable regulations.  
+**When a learner uses the tutor**
 
----
+- The Moodle user ID, so a conversation is recognised across sessions.
+- The course, section and placement the tutor is used in, including the course
+  name.
+- The content of the messages exchanged with the tutor.
+- The learner's first name — only if the site has switched on personal address
+  in the plugin settings (off by default). Never the last name, email address
+  or username.
 
-## User Rights  
+**As events happen**
 
-We adhere to GDPR principles, ensuring users and administrators have full control over their data.  
+- Activity completion changes (complete, passed, failed, overridden by a
+  teacher), with the user ID, course and activity.
+- When a learner who used the tutor logs out: the time and a one-way hash of
+  that browser session's key, so the tutor session ends with the Moodle session.
 
-- **Transparency**:  
-  - We clearly inform users about what data is processed and how it is handled.  
+**Through the web-service connection**
 
-- **Access and Deletion**:  
-  - Since no personal data is stored, there is no need for access or deletion requests.  
-  - Chat history and session data are deleted immediately after the session ends.  
+Connecting creates a dedicated service account and a web-service token with
+which Alphabees reads course data to prepare the tutor. The token is limited to
+the functions of the plugin's own service. Besides course content, it can read:
 
----
+- course participants' names, email addresses, enrolments and groups;
+- course completion, progress and grades, as learners see them in their own
+  reports;
+- learners' contributions in activities: forum posts, assignment and quiz
+  attempts with their grades, database, wiki and glossary entries, and
+  calendar events;
+- which activities and sections a learner cannot open. The access rules and
+  profile values themselves are not sent.
 
-## External Services  
-
-The Alphabees Moodle Plugin interacts with external AI services through secure, encrypted connections to provide tutoring functionalities.  
-
-- **Data Minimization**:  
-  - Only non-personal session data is temporarily processed to provide AI responses.  
-  - No personal or identifiable information is transmitted to external services.  
-
-- **Consent**:  
-  - Admins configure and control the plugin to ensure compliance with their institution’s data protection policies.  
-
----
-
-## Security  
-
-We implement industry-standard measures to ensure data security:  
-
-- **Data Encryption**:  
-  - All data at rest is encrypted with **AES-256**.  
-  - Data in transit is encrypted with **TLS 1.2+**.  
-
-- **Access Control**:  
-  - Only authorized personnel can access plugin configurations and server data.  
+Texts that Moodle filters personalise (for example templates that insert a
+name) are rendered as a neutral viewer, so they carry no one's personal data.
 
 ---
 
-## Compliance  
+## What the plugin stores in Moodle
 
-- We strictly comply with GDPR and all relevant European data protection regulations.  
-- Our servers are hosted exclusively in Europe, ensuring data sovereignty.  
-
----
-
-## Contact  
-
-For privacy-related inquiries or concerns, please contact us at:  
-- **Email**: [support@alphabees.de](mailto:support@alphabees.de)  
+- Replay-protection nonces and outbound messages awaiting retry.
+- For sessions that loaded the tutor: two one-way hashes and a timestamp, no
+  user ID. Removed at logout, or after the session's timeout.
+- Completion changes waiting to be sent, removed once sent and after three days
+  at the latest.
 
 ---
 
-This privacy policy reflects our commitment to protecting user privacy and maintaining compliance with GDPR. No personal or user-specific data is stored or used in any way beyond the immediate functionality of the plugin.  
+## Data storage and transmission
+
+- **Encryption**: Data in transit is encrypted with **TLS 1.2+**. Data at rest
+  is encrypted with **AES-256**. Every request between Moodle and Alphabees is
+  signed (Ed25519), in both directions.
+- **Server locations**: Our servers are hosted by **Hetzner Online GmbH** in Nuremberg
+  and operate exclusively within German or European data centers.
+- **No AI training**: Client data, including chat interactions and uploaded
+  files, is not used to train AI models.
+- **Data processing agreements**: We maintain data processing agreements with
+  Hetzner Online GmbH to ensure compliance with GDPR and other applicable regulations.
+
+---
+
+## Control for site administrators
+
+- The plugin sends nothing before an administrator enters an API key.
+  Disconnecting revokes the web-service token and ends the signed connection;
+  the chat widget itself runs on the API key, so removing the key or the
+  blocks stops the tutor.
+- Sending the first name is off unless switched on.
+- Institutions remain responsible for informing their users and for the legal
+  basis of the processing. A data processing agreement with Alphabees is
+  available on request.
+
+---
+
+## Contact
+
+For privacy-related inquiries or concerns, please contact us at:
+
+- **Email**: [support@alphabees.de](mailto:support@alphabees.de)

@@ -36,6 +36,36 @@
         <INDEX NAME="nextattempt_idx" UNIQUE="false" FIELDS="nextattempt"/>
       </INDEXES>
     </TABLE>
+    <TABLE NAME="block_alphabees_sessions" COMMENT="Moodle sessions that loaded the tutor widget, so a logout can end the tutor session. Holds hashes only.">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="sidhash" TYPE="char" LENGTH="64" NOTNULL="true" COMMENT="sha256 of the PHP session id. The id itself is never stored."/>
+        <FIELD NAME="sessionhash" TYPE="char" LENGTH="64" NOTNULL="true" COMMENT="sha256(sesskey|wwwroot), the session as the widget names it."/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="sidhash_uniq" UNIQUE="true" FIELDS="sidhash"/>
+        <INDEX NAME="timemodified_idx" UNIQUE="false" FIELDS="timemodified"/>
+      </INDEXES>
+    </TABLE>
+    <TABLE NAME="block_alphabees_outbox" COMMENT="Events waiting to be sent to the backend in batches, e.g. completion changes.">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="kind" TYPE="char" LENGTH="32" NOTNULL="true"/>
+        <FIELD NAME="payload" TYPE="text" NOTNULL="true"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="kind_idx" UNIQUE="false" FIELDS="kind"/>
+        <INDEX NAME="timecreated_idx" UNIQUE="false" FIELDS="timecreated"/>
+      </INDEXES>
+    </TABLE>
     <TABLE NAME="block_alphabees_notifylog" COMMENT="Dedup record of notifications already delivered for a backend event.">
       <FIELDS>
         <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>

@@ -28,17 +28,18 @@ defined('MOODLE_INTERNAL') || die();
 $plugin->component = 'block_alphabees';
 
 // The plugin version in YYYYMMDDXX format.
-$plugin->version = 2026091700;
+$plugin->version = 2026102700;
 
 // Minimum Moodle version required for this plugin.
-$plugin->requires = 2022112800;
+$plugin->requires = 2023042400;
 
 // List of supported Moodle versions.
-// Range: 4.1 LTS (lowest) through 5.2 (latest as of release).
-$plugin->supported = [401, 502];
+// Range: 4.2 (lowest) through 5.3 LTS (latest as of release). 4.1 lacks the
+// core_external namespace the web-service connection is built on.
+$plugin->supported = [402, 503];
 
 // Maturity level of the plugin: MATURITY_ALPHA, MATURITY_BETA, MATURITY_RC, or MATURITY_STABLE.
 $plugin->maturity = MATURITY_STABLE;
 
 // Human-readable plugin release sent to the Alphabees backend.
-$plugin->release = '3.1.2';
+$plugin->release = '3.2.0';

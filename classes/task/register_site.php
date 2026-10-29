@@ -83,6 +83,10 @@ class register_site extends \core\task\adhoc_task {
             'admin_email' => self::primary_admin_email(),
             'moodle_version' => (string)$CFG->release,
             'plugin_version' => self::plugin_release(),
+            // Until 3.2.0 only the release string was sent, so no connection
+            // ever reported a version code.
+            'plugin_version_code' => \block_alphabees\local\plugin_features::version()['version'],
+            'capabilities' => \block_alphabees\local\plugin_features::list(),
             'language' => current_language(),
             'public_key' => crypto::base64url_encode($publickey),
             'key_id' => site_registry::key_id(),

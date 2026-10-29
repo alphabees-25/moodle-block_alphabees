@@ -362,8 +362,14 @@ class block_alphabees extends block_base {
             PARAM_ALPHANUMEXT
         );
 
+        // The course's names as the learner reads them, so the tutor can name
+        // the course without a lookup. Sent on every page, like the id.
+        $courselabel = \block_alphabees\local\course_label::of($courseid, $this->page->course ?? null);
+
         $extracontext = [
             'courseid'       => $courseid,
+            'coursename'     => $courselabel['name'],
+            'courseshortname' => $courselabel['shortname'],
             'sectionnum'     => $sectionnum,
             'sectionid'      => $sectionid,
             'contextid'      => $pagecontext ? (int)$pagecontext->id : 0,
@@ -379,6 +385,12 @@ class block_alphabees extends block_base {
             'siteidentifier' => \block_alphabees\local\site_registry::site_identifier(),
             'deeplink'       => $deeplink,
         ];
+
+        // Names this Moodle session to al-tutor, and records it so a logout can
+        // end the tutor session there (see local\session_tracker).
+        if (isloggedin() && !isguestuser()) {
+            $extracontext['sessionhash'] = \block_alphabees\local\session_tracker::remember();
+        }
 
         // Opt-in (site setting, default off): first name only — enough for
         // display and personal address in the widget. Deliberately not part

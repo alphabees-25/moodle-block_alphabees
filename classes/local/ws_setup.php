@@ -19,11 +19,13 @@
  *
  * Encapsulates every step a Moodle admin would otherwise click through:
  *   1. Enable web services site-wide.
- *   2. Enable the REST protocol.
+ *   2. Enable the REST protocol, and where Moodle requires it (5.3+) the
+ *      "Web services authentication" plugin the service user signs in with.
  *   3. Ensure the `block_alphabees` external service exists (db/services.php
  *      pre-declares it on plugin install; this layer is defensive in case
  *      the row was deleted manually).
- *   4. Create a dedicated `alphabees-service` user, idempotently.
+ *   4. Create a dedicated `alphabees-service` user, idempotently, and fill in
+ *      the custom profile fields this site makes mandatory.
  *   5. Create a system role with the plugin's web-service capability and
  *      assign it to that user.
  *   6. Add the user as authorised user of the service.
@@ -52,6 +54,9 @@ class ws_setup {
     /** Username of the dedicated service user. */
     public const SERVICE_USERNAME = 'alphabees-service';
 
+    /** Login type of the service user: token only, no login page, no password reset. */
+    public const SERVICE_USER_AUTH = 'webservice';
+
     /** Shortname of the auto-created system role granted to the service user. */
     public const SERVICE_ROLE_SHORTNAME = 'alphabees_service';
 
@@ -60,6 +65,16 @@ class ws_setup {
 
     /** REST protocol capability required by webservice/rest/server.php. */
     public const REST_PROTOCOL_CAPABILITY = 'webservice/rest:use';
+
+    /**
+     * Function the self-test calls to prove the service user gets past
+     * require_login(). Any function that calls validate_context() would do;
+     * this one is in the service on every site and needs no course.
+     */
+    private const LOGIN_GATE_PROBE = 'core_user_get_users_by_field';
+
+    /** Value written into required free-text profile fields of the service user. */
+    private const PROFILE_PLACEHOLDER = 'n/a';
 
     /** Component name used for config_plugins diagnostics. */
     private const COMPONENT = 'block_alphabees';
@@ -82,6 +97,7 @@ class ws_setup {
 
         self::enable_webservices_globally();
         self::enable_rest_protocol();
+        self::enable_service_user_auth();
         $serviceid = self::ensure_service();
         $userid = self::ensure_service_user();
         self::ensure_role_and_assignment($userid);
@@ -117,6 +133,7 @@ class ws_setup {
 
         self::enable_webservices_globally();
         self::enable_rest_protocol();
+        self::enable_service_user_auth();
         $serviceid = self::ensure_service();
         $userid = self::ensure_service_user();
         self::ensure_role_and_assignment($userid);
@@ -288,6 +305,31 @@ class ws_setup {
     }
 
     /**
+     * Enable the auth plugin the service user signs in with, where needed.
+     *
+     * The account carries auth=webservice so it can never use the login page
+     * and nobody can have its password reset by mail. Up to 5.2 a token worked
+     * for such an account whether that plugin was enabled or not. Since 5.3
+     * every token login passes \core_auth\validate_user, which refuses an
+     * account whose auth plugin is disabled ("wsaccessusernologin") — and this
+     * one is off by default, so a connected site lost its sync by upgrading
+     * Moodle.
+     *
+     * Detected by that class rather than by version number, so a site is only
+     * changed where Moodle demands it and a backport is covered as well.
+     * Enabling the plugin affects accounts created with this login type and
+     * no others. It is left enabled on disconnect: we cannot know who else
+     * came to rely on it.
+     *
+     * @return void
+     */
+    private static function enable_service_user_auth(): void {
+        if (class_exists(\core_auth\validate_user::class)) {
+            \core\plugininfo\auth::enable_plugin(self::SERVICE_USER_AUTH, 1);
+        }
+    }
+
+    /**
      * Ensure the external service row exists AND has every function from
      * db/services.php linked.
      *
@@ -416,29 +458,7 @@ class ws_setup {
         // Only functions exposed by this Moodle are required in the token self-test.
         $servicefunctions = self::partition_declared_service_functions();
         $requiredfunctions = $servicefunctions[0];
-        $url = rtrim((string)$CFG->wwwroot, '/') . '/webservice/rest/server.php';
-        $params = [
-            'wstoken' => $token,
-            'wsfunction' => 'core_webservice_get_site_info',
-            'moodlewsrestformat' => 'json',
-        ];
-
-        $curl = new \curl(['timeout' => 15]);
-        $rawresponse = $curl->get($url, $params);
-        $httpcode = (int)($curl->info['http_code'] ?? 0);
-        $errno = $curl->get_errno();
-
-        if ($errno !== 0 || $httpcode !== 200) {
-            $error = $curl->error ?: ('HTTP ' . $httpcode);
-            self::record_self_test(false, 'transport_error: ' . $error, [], 0);
-            throw new \moodle_exception('ws_selftest_failed', 'block_alphabees', '', $error);
-        }
-
-        $decoded = json_decode((string)$rawresponse, true);
-        if (!is_array($decoded)) {
-            self::record_self_test(false, 'invalid_json_response', [], 0);
-            throw new \moodle_exception('ws_selftest_failed', 'block_alphabees', '', 'invalid_json_response');
-        }
+        $decoded = self::self_test_call($token, 'core_webservice_get_site_info', [], 0);
 
         if (isset($decoded['exception'])) {
             $errorcode = (string)($decoded['errorcode'] ?? 'unknown');
@@ -461,7 +481,89 @@ class ws_setup {
             throw new \moodle_exception('ws_selftest_failed', 'block_alphabees', '', $error);
         }
 
+        self::self_test_login_gate($token, count($available));
         self::record_self_test(true, null, [], count($available));
+    }
+
+    /**
+     * Check that Moodle lets the service user past require_login().
+     *
+     * core_webservice_get_site_info never calls validate_context(), so it
+     * answers for an account Moodle refuses on nearly every other function:
+     * the token looked healthy and the backend's sync failed on its first real
+     * call. This asks for the service user's own record through a function
+     * that does go through the gate.
+     *
+     * @param string $token
+     * @param int $functioncount Function count to keep in the diagnostics.
+     * @return void
+     * @throws \moodle_exception When Moodle refuses the call.
+     */
+    private static function self_test_login_gate(string $token, int $functioncount): void {
+        global $DB;
+        $userid = (int)$DB->get_field('user', 'id', ['username' => self::SERVICE_USERNAME, 'deleted' => 0]);
+        $decoded = self::self_test_call($token, self::LOGIN_GATE_PROBE, [
+            'field' => 'id',
+            'values' => [$userid],
+        ], $functioncount);
+        if (!isset($decoded['exception'])) {
+            return;
+        }
+
+        $errorcode = (string)($decoded['errorcode'] ?? 'unknown');
+        $error = $errorcode . ': ' . (string)($decoded['message'] ?? $decoded['exception']);
+        if ($errorcode === 'usernotfullysetup') {
+            // The usual cause is a required profile field we could not fill.
+            // Name it, so the admin knows which one to complete by hand.
+            $open = array_map('strval', array_keys(self::service_user_profile_gaps($userid)));
+            if ($open) {
+                $error = get_string('ws_selftest_profile_incomplete', 'block_alphabees', implode(', ', $open));
+            }
+        }
+        self::record_self_test(false, $error, [], $functioncount);
+        throw new \moodle_exception('ws_selftest_failed', 'block_alphabees', '', $error);
+    }
+
+    /**
+     * Call one web-service function with the token, the way the backend will.
+     *
+     * Transport failures and non-JSON answers are recorded and thrown here. A
+     * Moodle exception comes back decoded, because what it means depends on
+     * the function that was asked.
+     *
+     * @param string $token
+     * @param string $function
+     * @param array $args Arguments of the function.
+     * @param int $functioncount Function count to keep in the diagnostics on failure.
+     * @return array Decoded JSON response.
+     * @throws \moodle_exception
+     */
+    private static function self_test_call(string $token, string $function, array $args, int $functioncount): array {
+        global $CFG;
+        $url = rtrim((string)$CFG->wwwroot, '/') . '/webservice/rest/server.php';
+        $params = [
+            'wstoken' => $token,
+            'wsfunction' => $function,
+            'moodlewsrestformat' => 'json',
+        ] + $args;
+
+        $curl = new \curl(['timeout' => 15]);
+        $rawresponse = $curl->get($url, $params);
+        $httpcode = (int)($curl->info['http_code'] ?? 0);
+        $errno = $curl->get_errno();
+
+        if ($errno !== 0 || $httpcode !== 200) {
+            $error = $curl->error ?: ('HTTP ' . $httpcode);
+            self::record_self_test(false, 'transport_error: ' . $error, [], $functioncount);
+            throw new \moodle_exception('ws_selftest_failed', 'block_alphabees', '', $error);
+        }
+
+        $decoded = json_decode((string)$rawresponse, true);
+        if (!is_array($decoded)) {
+            self::record_self_test(false, 'invalid_json_response', [], $functioncount);
+            throw new \moodle_exception('ws_selftest_failed', 'block_alphabees', '', 'invalid_json_response');
+        }
+        return $decoded;
     }
 
     /**
@@ -575,21 +677,19 @@ class ws_setup {
                     'suspended' => 0,
                 ]);
             }
+            self::complete_service_user_profile((int)$existing->id);
             return (int)$existing->id;
         }
 
-        $user = (object)[
+        $user = (object)(self::service_user_identity() + [
             'username' => self::SERVICE_USERNAME,
-            'firstname' => 'Alphabees',
-            'lastname' => 'Service',
-            'email' => 'noreply+alphabees-' . substr((string)$CFG->siteidentifier, 0, 8) . '@alphalearn.ai',
-            'auth' => 'webservice',
+            'auth' => self::SERVICE_USER_AUTH,
             'confirmed' => 1,
             'mnethostid' => $CFG->mnet_localhost_id,
             'lang' => 'en',
             'maildisplay' => 0,
             'description' => 'Auto-created by block_alphabees for the Alphabees web-services integration.',
-        ];
+        ]);
         $userid = \user_create_user($user, false, false);
         // Set a random password — the account never logs in via UI; tokens
         // are the only auth surface, but Moodle requires a non-empty hash.
@@ -598,7 +698,159 @@ class ws_setup {
             'password' => hash_internal_user_password(bin2hex(random_bytes(32))),
         ];
         $DB->update_record('user', $rec);
+        self::complete_service_user_profile((int)$userid);
         return (int)$userid;
+    }
+
+    /**
+     * Put the service user back into a state Moodle accepts token calls from.
+     *
+     * Two things change underneath a connected site without any of our code
+     * running: an admin makes a profile field mandatory, or Moodle itself is
+     * upgraded to a release that wants the account's auth plugin enabled.
+     * Safe to call at any time, and a no-op without that user.
+     *
+     * @return string[] Shortnames of required profile fields that still have no value.
+     */
+    public static function repair_service_user(): array {
+        global $DB;
+        $userid = (int)$DB->get_field('user', 'id', ['username' => self::SERVICE_USERNAME, 'deleted' => 0]);
+        if (!$userid) {
+            return [];
+        }
+        // Only where a token is actually in use: a site that switched the
+        // integration off must not have a site-wide setting changed for it.
+        if (self::is_enabled()) {
+            self::enable_service_user_auth();
+        }
+        return self::complete_service_user_profile($userid);
+    }
+
+    /**
+     * Give the service user a value for every required custom profile field.
+     *
+     * On a token request require_login() refuses an account with an empty
+     * required profile field ("usernotfullysetup"), service account or not.
+     * user_create_user() writes core fields only, so on a site with such a
+     * field the account was created in a state Moodle would not let through.
+     *
+     * A field type we do not know is left alone rather than guessed at, and is
+     * returned so the caller can name it.
+     *
+     * @param int $userid
+     * @return string[] Shortnames of required fields that still have no value.
+     */
+    private static function complete_service_user_profile(int $userid): array {
+        global $DB;
+
+        // The other way into the same refusal: Moodle wants a first name, a
+        // last name and an address on every account. Only blanks are written,
+        // so an admin who renamed the account keeps their wording.
+        $user = $DB->get_record('user', ['id' => $userid], 'id, firstname, lastname, email', MUST_EXIST);
+        $restore = [];
+        foreach (self::service_user_identity() as $name => $value) {
+            if (empty($user->{$name})) {
+                $restore[$name] = $value;
+            }
+        }
+        if ($restore) {
+            $DB->update_record('user', (object)(['id' => $userid] + $restore));
+        }
+
+        $gaps = self::service_user_profile_gaps($userid);
+        $values = [];
+        foreach ($gaps as $shortname => $field) {
+            $value = self::profile_placeholder($field);
+            if ($value !== null) {
+                $values[$shortname] = $value;
+            }
+        }
+        if ($values) {
+            \profile_save_custom_fields($userid, $values);
+            // Ask again instead of assuming the write settled it: whether a
+            // stored value counts as "not empty" is the field type's decision.
+            $gaps = self::service_user_profile_gaps($userid);
+        }
+        return array_map('strval', array_keys($gaps));
+    }
+
+    /**
+     * The three core fields Moodle requires on any account, as we set them.
+     *
+     * The address is derived from siteidentifier so several sites never
+     * collide on the unique-email constraint.
+     *
+     * @return string[]
+     */
+    private static function service_user_identity(): array {
+        global $CFG;
+        return [
+            'firstname' => 'Alphabees',
+            'lastname' => 'Service',
+            'email' => 'noreply+alphabees-' . substr((string)$CFG->siteidentifier, 0, 8) . '@alphalearn.ai',
+        ];
+    }
+
+    /**
+     * The required custom profile fields the user has no value for.
+     *
+     * Applies the same four conditions as core's
+     * profile_has_required_custom_fields_set(), which is what require_login()
+     * evaluates, so "no gaps" here and "Moodle lets the call through" cannot
+     * drift apart. A field with a default value is not a gap, except a
+     * checkbox, which since 4.5 only counts once the user has a row of their own.
+     *
+     * @param int $userid
+     * @return \stdClass[] user_info_field records, keyed by shortname.
+     */
+    private static function service_user_profile_gaps(int $userid): array {
+        global $CFG;
+        require_once($CFG->dirroot . '/user/profile/lib.php');
+
+        $gaps = [];
+        foreach (\profile_get_user_fields_with_data($userid) as $field) {
+            $config = (object)$field->get_field_config_for_external();
+            if ($field->is_required() && !$field->is_locked() && $field->is_empty() && !empty($config->visible)) {
+                $gaps[(string)$config->shortname] = $config;
+            }
+        }
+        return $gaps;
+    }
+
+    /**
+     * The value to store for one required profile field, in the raw form the
+     * field type keeps in user_info_data.
+     *
+     * @param \stdClass $field user_info_field record.
+     * @return string|null Null for a field we cannot give a sensible value.
+     */
+    private static function profile_placeholder(\stdClass $field): ?string {
+        switch ($field->datatype) {
+            case 'text':
+                // A field that must be unique gets a value no person will ever enter.
+                $value = empty($field->forceunique) ? self::PROFILE_PLACEHOLDER : self::SERVICE_USERNAME;
+                $maxlength = (int)($field->param2 ?? 0);
+                return $maxlength > 0 ? \core_text::substr($value, 0, $maxlength) : $value;
+            case 'textarea':
+            case 'social':
+                return self::PROFILE_PLACEHOLDER;
+            case 'menu':
+                // The first real option. A menu stores the option text itself.
+                foreach (explode("\n", (string)($field->param1 ?? '')) as $option) {
+                    if (trim($option) !== '') {
+                        return trim($option);
+                    }
+                }
+                return null;
+            case 'checkbox':
+                // Unticked. An explicit answer satisfies the check, and a machine
+                // account has no business agreeing to whatever the box asks.
+                return '0';
+            case 'datetime':
+                return (string)time();
+            default:
+                return null;
+        }
     }
 
     /**

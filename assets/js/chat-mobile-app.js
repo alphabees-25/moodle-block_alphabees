@@ -40,6 +40,8 @@
     var API_KEY   = container.getAttribute("data-apikey")    || "";
     var BOT_ID    = container.getAttribute("data-botid")     || "";
     var COURSE_ID = Number(container.getAttribute("data-courseid")  || 0) || 0;
+    var COURSE_NAME = container.getAttribute("data-coursename") || "";
+    var COURSE_SHORTNAME = container.getAttribute("data-courseshortname") || "";
     var USER_ID   = Number(container.getAttribute("data-userid")    || 0) || 0;
     // Opt-in (site setting send_userprofile): empty when disabled.
     var USER_FIRSTNAME = container.getAttribute("data-userfirstname") || "";
@@ -60,6 +62,8 @@
     function moodleContext() {
         return {
             courseId: COURSE_ID,
+            courseName: COURSE_NAME,
+            courseShortname: COURSE_SHORTNAME,
             sectionNum: SECTION_NUM,
             sectionId: SECTION_ID,
             contextId: CONTEXT_ID,
@@ -81,7 +85,7 @@
         return String(state.sessionId || state.session_id || state.conversationId || state.conversation_id || "");
     }
 
-    function emitMoodleContextEvent(payload, reason) {
+    function emitMoodleContextEvent(payload, reason, previousCourseId) {
         var eventPayload = {
             eventType: "moodle.context.changed",
             reason: reason || "init",
@@ -90,6 +94,9 @@
             sessionId: currentSessionId(),
             data: payload
         };
+        if (typeof previousCourseId === "number") {
+            eventPayload.previousCourseId = previousCourseId;
+        }
         window.postMessage({ type: "alMoodleContextChanged", data: eventPayload }, "*");
         if (typeof window.CustomEvent === "function") {
             window.dispatchEvent(new CustomEvent("alphabees:moodle-context-changed", {
@@ -107,8 +114,8 @@
             var s = document.createElement("script");
             s.id = "alphabees-bundle";
             const randomId = Date.now() + "-" + Math.random().toString(36).slice(2);
-            // ALPHABEES_ENV_SWITCH — currently PROD. For development work
-            // switch to the DEV line.
+            // ALPHABEES_ENV_SWITCH — currently PROD. For a release
+            // switch to the PROD line.
             // PROD: https://chat.alphalearn.ai/chat-widget.js
             // DEV:  https://chat.alphabees.de/development/chat-widget.js
             s.src = `https://chat.alphalearn.ai/chat-widget.js?cacheBust=${randomId}`;
@@ -172,6 +179,14 @@
             data: updatePayload
         }, "*");
         emitMoodleContextEvent(updatePayload, "navigation");
+        // The app keeps one window across views, so the last course is still
+        // known here. A different one gets its own event on top of the
+        // navigation update, with the course it came from.
+        var previousCourseId = window.__alphabeesLastCourseId;
+        window.__alphabeesLastCourseId = COURSE_ID;
+        if (typeof previousCourseId === "number" && previousCourseId !== COURSE_ID) {
+            emitMoodleContextEvent(updatePayload, "course_changed", previousCourseId);
+        }
         window.postMessage({ type: "alConnect" }, "*");
     })
     .catch(function (e) {
