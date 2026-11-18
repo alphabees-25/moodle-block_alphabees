@@ -85,31 +85,26 @@ class mobile {
         $contextid = 0;
         $contextlevel = 0;
 
+        // What the app names is checked for this user; a module they may not
+        // see is reported as unknown, without id or name (local\page_context).
+        $activity = \block_alphabees\local\page_context::of_cmid($cmid, (int)$USER->id);
+        $cmid = $activity['cmid'];
         if ($cmid) {
-            $sql = "SELECT cm.id, cm.course, cm.section, cm.instance, m.name AS modtype
-                      FROM {course_modules} cm
-                      JOIN {modules} m ON m.id = cm.module
-                     WHERE cm.id = ?";
-            $cm = $DB->get_record_sql($sql, [$cmid], IGNORE_MISSING);
-            if ($cm) {
-                $courseid = $courseid ?: (int)$cm->course;
-                $sectionid = $sectionid ?: (int)$cm->section;
-                $activityid = $activityid ?: (int)$cm->instance;
-                $modtype = $modtype !== '' ? $modtype : (string)$cm->modtype;
-                $ctx = \context_module::instance($cmid, IGNORE_MISSING, false);
-                if ($ctx) {
-                    $contextid = (int)$ctx->id;
-                    $contextlevel = (int)$ctx->contextlevel;
-                }
-                if ($activityname === '' && $modtype !== '') {
-                    try {
-                        $name = $DB->get_field($modtype, 'name', ['id' => $cm->instance], IGNORE_MISSING);
-                        $activityname = $name !== false ? clean_param((string)$name, PARAM_TEXT) : '';
-                    } catch (\Throwable $e) {
-                        unset($e);
-                    }
-                }
+            $modtype = $activity['modtype'];
+            $activityid = $activity['activityid'];
+            $activityname = $activity['activityname'];
+            $sectionid = $activity['sectionid'];
+            $sectionnum = $sectionnum ?: $activity['sectionnum'];
+            $ctx = \context_module::instance($cmid, IGNORE_MISSING);
+            if ($ctx) {
+                $courseid = $courseid ?: (int)$ctx->get_course_context()->instanceid;
+                $contextid = (int)$ctx->id;
+                $contextlevel = (int)$ctx->contextlevel;
             }
+        } else {
+            $modtype = '';
+            $activityid = 0;
+            $activityname = '';
         }
 
         // Attempt to resolve the DB course_sections.id when possible.
@@ -129,6 +124,11 @@ class mobile {
 
         // Real user ID, as requested.
         $userid = (int)$USER->id;
+
+        // Signed proof of who opened the app view (see local\start_token). The
+        // app has no web session, so there is no sessionHash to bind to; the
+        // handler runs again on each in-app navigation, minting a fresh one.
+        $starttoken = \block_alphabees\local\start_token::issue($userid, $courseid, $cmid, $placementuuid);
 
         // Same course names as the web block sends.
         $courselabel = \block_alphabees\local\course_label::of($courseid);
@@ -178,9 +178,13 @@ class mobile {
             'modtype'    => $modtype,
             'activityid' => $activityid,
             'activityname' => $activityname,
+            'activitystate' => $activity['activitystate'],
+            'activityreason' => $activity['activityreason'],
+            'contextversion' => $activity['contextversion'],
             'placementuuid'  => $placementuuid,
             'siteidentifier' => \block_alphabees\local\site_registry::site_identifier(),
             'primarycolor'   => $primarycolor,
+            'starttoken'     => $starttoken['token'] ?? '',
         ]);
 
         // Inline the app JS (avoids MIME type / 404 issues from the dev server).
@@ -211,10 +215,7 @@ class mobile {
 
         // Extremely defensive fallback if config were serialized (unlikely here).
         if (!empty($instance->config) && is_string($instance->config)) {
-            $decoded = @unserialize($instance->config);
-            if (is_object($decoded)) {
-                return $decoded;
-            }
+            return \block_alphabees\local\placement_repository::decode_config(base64_encode($instance->config));
         }
         return new \stdClass();
     }
@@ -250,8 +251,7 @@ class mobile {
         }
         $rec = reset($recs);
 
-        $cfg = @unserialize(base64_decode($rec->configdata ?: ''));
-        return is_object($cfg) ? $cfg : new \stdClass();
+        return \block_alphabees\local\placement_repository::decode_config((string)($rec->configdata ?? ''));
     }
 
     /**

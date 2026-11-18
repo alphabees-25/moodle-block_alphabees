@@ -65,6 +65,8 @@ class console_token {
         $scope = self::scoped_courses($userid);
         $payload = [
             'v' => self::VERSION,
+            // Start tokens share format and key; the type keeps them apart.
+            'typ' => 'console',
             'site' => site_registry::site_identifier(),
             'kid' => site_registry::key_id(),
             'uid' => $userid,

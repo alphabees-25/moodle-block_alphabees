@@ -23,8 +23,8 @@
  * conditions that depend on the site, such as whether the Completion
  * Progress block is installed in a version this plugin can read.
  *
- * Sent at registration and in the answers to ping and describe_actions,
- * together with the version code ($plugin->version).
+ * Sent at registration, with every hourly heartbeat and in the answers to
+ * ping and describe_actions, together with the version code ($plugin->version).
  *
  * @package   block_alphabees
  * @copyright 2026 Alphabees
@@ -44,15 +44,21 @@ class plugin_features {
      */
     public static function list(): array {
         $features = [
+            'activity_text',
             'completion_events',
+            'completion_guard',
             'course_completions.paged',
             'course_fields',
             'course_grades',
             'function_schemas',
             'generico_templates',
+            'grades_write',
+            'notify.grade_review',
+            'page_context_v2',
             'progress_sources',
             'rendered_course_texts',
             'session_ended',
+            'start_token',
             'user_access',
         ];
         if (completion_progress_reader::status()['supported']) {

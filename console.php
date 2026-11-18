@@ -68,11 +68,13 @@ if (!block_alphabees_console_capability_installed()) {
 $courseid = optional_param('course', 0, PARAM_INT);
 $conversationid = optional_param('conversation', '', PARAM_ALPHANUMEXT);
 $caseid = optional_param('case', '', PARAM_ALPHANUMEXT);
+$reviewid = optional_param('review', '', PARAM_ALPHANUMEXT);
 
 $params = array_filter([
     'course' => $courseid ?: null,
     'conversation' => $conversationid ?: null,
     'case' => $caseid ?: null,
+    'review' => $reviewid ?: null,
 ]);
 $pageurl = new moodle_url('/blocks/alphabees/console.php', $params);
 
@@ -156,6 +158,7 @@ $PAGE->requires->js_call_amd('block_alphabees/console', 'init', [
         'courseId' => (int)$courseid,
         'conversationId' => $conversationid,
         'caseId' => $caseid,
+        'reviewId' => $reviewid,
         'lang' => current_language(),
         'mount' => '#alphabees-console-root',
     ],

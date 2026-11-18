@@ -83,10 +83,14 @@ final class action_policy {
         'upsert_modules',
         'delete_course_modules',
         'set_activity_completion',
+        'set_grades',
+        'list_grade_items',
+        'delete_grade_item',
         'upload_file',
         'list_h5p_libraries',
         'list_generico_templates',
         'get_user_access',
+        'get_activity_text',
         'notify',
     ];
 

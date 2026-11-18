@@ -16,8 +16,6 @@
 
 namespace block_alphabees\local;
 
-
-
 #[\PHPUnit\Framework\Attributes\CoversClass(\block_alphabees\local\plugin_features::class)]
 /**
  * Tests for the feature list reported to the backend.
@@ -30,8 +28,9 @@ namespace block_alphabees\local;
 final class plugin_features_test extends \advanced_testcase {
     public function test_lists_features_and_version(): void {
         $features = plugin_features::list();
-        $expected = ['course_completions.paged', 'course_fields', 'course_grades', 'function_schemas', 'progress_sources',
-            'rendered_course_texts', 'user_access'];
+        $expected = ['activity_text', 'page_context_v2', 'completion_guard', 'course_completions.paged', 'course_fields',
+            'course_grades', 'function_schemas',
+            'grades_write', 'notify.grade_review', 'progress_sources', 'rendered_course_texts', 'start_token', 'user_access'];
         foreach ($expected as $f) {
             $this->assertContains($f, $features);
         }

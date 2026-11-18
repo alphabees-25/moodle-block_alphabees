@@ -5,6 +5,42 @@ follow the plugin's `release` string in `version.php`.
 
 This file starts at 3.1.0, the first release published after 3.0.3.
 
+## 3.4.0 — 2026-11-18
+
+3.3.0 was never published; everything built for it ships in 3.4.0.
+
+- **The tutor knows for certain who is asking.** Every page with the tutor now
+  hands it a short-lived proof, signed by Moodle, of the signed-in learner,
+  the course and the activity. Alphabees relies on that proof instead of what
+  the browser reports, so a learner can no longer pose as someone else to see
+  their history or grades. Pages left open for a long time get a fresh proof
+  automatically. Works in the Moodle app too.
+- **The tutor knows which activity is open.** A fault in the block meant the
+  open activity was never reported, on any page; the tutor only ever knew the
+  course. It now gets the activity's name and type on every page, and can read
+  the text of a lesson, a book or a text page the learner has open — only what
+  that learner may open themselves, and never quiz questions or solutions.
+- **Copied blocks become placements of their own.** Copying or restoring a
+  course, or resetting dashboards, used to give the copy the same placement
+  identity as the original, so Alphabees saw both as one. Each copy now gets
+  its own, and existing duplicates are separated within the hour; the oldest
+  block keeps the original.
+- **Tutor results in the gradebook.** Alphabees can record the result of a
+  tutor exercise as a grade item of its own in the course, so teachers see it
+  in the gradebook and restrictions such as "next chapter from 80 %" can use
+  it. It never touches other grade items, and a grade a teacher changed by
+  hand or locked stays as the teacher left it.
+- **Completions follow the same rule.** When Alphabees marks an activity
+  complete, it no longer replaces what a teacher set by hand or what the
+  learner reached on their own — a learner's own completion is never turned
+  into an override.
+- **Moodle notification for grades to review.** Teachers who may see grades
+  can be told through the bell, by email and in the app when grades from the
+  tutor wait for their review, and reminded when they stay open.
+- Stored block settings are read without ever creating PHP objects from them.
+- The hourly synchronisation now reports the plugin version, so Alphabees
+  notices an update within the hour.
+
 ## 3.2.0 — 2026-10-29
 
 Includes 3.1.3 and 3.1.4, which were never published on their own.

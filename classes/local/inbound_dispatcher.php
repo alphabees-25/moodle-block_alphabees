@@ -134,6 +134,12 @@ class inbound_dispatcher {
                 return self::action_delete_course_modules($params);
             case 'set_activity_completion':
                 return self::action_set_activity_completion($params);
+            case 'set_grades':
+                return self::action_set_grades($params);
+            case 'list_grade_items':
+                return self::action_list_grade_items($params);
+            case 'delete_grade_item':
+                return self::action_delete_grade_item($params);
             case 'upload_file':
                 return self::action_upload_file($params);
             case 'list_h5p_libraries':
@@ -142,6 +148,8 @@ class inbound_dispatcher {
                 return self::action_list_generico_templates($params);
             case 'get_user_access':
                 return self::action_get_user_access($params);
+            case 'get_activity_text':
+                return self::action_get_activity_text($params);
             case 'notify':
                 return self::action_notify($params);
             case 'console_context':
@@ -850,6 +858,10 @@ class inbound_dispatcher {
         $instanceid = $DB->insert_record('block_instances', $record);
 
         $instance = $DB->get_record('block_instances', ['id' => $instanceid]);
+        if ($instance) {
+            placement_repository::claim_uuid($instance, $configdata);
+            $instance->configdata = placement_repository::encode_config($configdata);
+        }
         if (!$instance) {
             return [
                 'ok' => false,
@@ -1165,13 +1177,22 @@ class inbound_dispatcher {
      * completion_info::update_state() checks moodle/course:overridecompletion
      * on the current $USER and api.php has no session.
      *
-     * params: { cmid: int, userid: int, completed: bool }
-     *     or  { cmid: int, userid: int, state: "complete" | "incomplete" }
+     * params: { cmid: int, userid: int, completed: bool, override_teacher?: bool }
+     *     or  { cmid: int, userid: int, state: "complete" | "incomplete", ... }
+     *
+     * Only a state that is still empty or that Alphabees itself set is
+     * changed (3.3.0), the same rule as for grades: a state a teacher
+     * overrode is refused as teacher_modified, a result the learner reached
+     * themselves (complete, passed or failed without an override) as
+     * learner_result — unless override_teacher. A request for the state the
+     * learner already has writes nothing and answers unchanged = true, so
+     * a real completion is never turned into an override.
      *
      * Responses: 400 missing/invalid params, 404 cm/user unknown,
      * 409 completion_not_enabled | user_not_tracked (user has no active
-     * enrolment counted in completion reports), 403 actor lacks capability
-     * (WS integration disabled and no admin fallback), 200 with resulting state.
+     * enrolment counted in completion reports) | teacher_modified |
+     * learner_result, 403 actor lacks capability (WS integration disabled and
+     * no admin fallback), 200 with resulting state.
      *
      * @param array $params
      * @return array
@@ -1228,10 +1249,27 @@ class inbound_dispatcher {
                 return self::deny(403, ['error' => 'actor_lacks_overridecompletion']);
             }
 
-            $data = self::run_as($actor, function () use ($completion, $cm, $userid, $newstate) {
-                $completion->update_state($cm, $newstate, $userid, true);
-                return $completion->get_data($cm, false, $userid);
-            });
+            $current = $completion->get_data($cm, false, $userid);
+            $refusal = self::completion_refusal(
+                $current,
+                $completed,
+                (int)$actor->id,
+                self::truthy(self::param_any($params, ['override_teacher', 'overrideTeacher']) ?? false)
+            );
+            if ($refusal === 'unchanged') {
+                $data = $current;
+            } else if ($refusal !== null) {
+                return self::deny(409, [
+                    'error' => $refusal,
+                    'completionstate' => (int)$current->completionstate,
+                    'overrideby' => (int)($current->overrideby ?? 0),
+                ]);
+            } else {
+                $data = self::run_as($actor, function () use ($completion, $cm, $userid, $newstate) {
+                    $completion->update_state($cm, $newstate, $userid, true);
+                    return $completion->get_data($cm, false, $userid);
+                });
+            }
         } catch (\Throwable $e) {
             debugging('[block_alphabees] set_activity_completion failed: ' . $e->getMessage(), DEBUG_DEVELOPER);
             return self::deny(500, ['error' => 'internal', 'detail' => $e->getMessage()]);
@@ -1246,7 +1284,144 @@ class inbound_dispatcher {
             'completed' => $resultstate !== COMPLETION_INCOMPLETE,
             'overrideby' => (int)($data->overrideby ?? 0),
             'timemodified' => (int)($data->timemodified ?? 0),
+            'unchanged' => $refusal === 'unchanged',
+            'previousstate' => (int)$current->completionstate,
         ]);
+    }
+
+    /**
+     * Whether a completion state may be replaced by the one requested.
+     *
+     * @param \stdClass $current The learner's completion data for the cm.
+     * @param bool $completed The requested state.
+     * @param int $actorid The account Alphabees writes as.
+     * @param bool $override Replace a state someone else set.
+     * @return string|null null to write, 'unchanged' when the learner already
+     *         has that state, else the refusal code.
+     */
+    private static function completion_refusal(\stdClass $current, bool $completed, int $actorid, bool $override): ?string {
+        $state = (int)$current->completionstate;
+        $done = in_array($state, [COMPLETION_COMPLETE, COMPLETION_COMPLETE_PASS], true);
+        if ($completed ? $done : $state === COMPLETION_INCOMPLETE) {
+            return 'unchanged';
+        }
+        if ($override) {
+            return null;
+        }
+        $overrideby = (int)($current->overrideby ?? 0);
+        if ($overrideby > 0 && $overrideby !== $actorid) {
+            return 'teacher_modified';
+        }
+        if ($overrideby === 0 && $state !== COMPLETION_INCOMPLETE) {
+            return 'learner_result';
+        }
+        return null;
+    }
+
+    /**
+     * Write learners' results into an Alphabees grade item, creating it if needed.
+     *
+     * params: { courseid, ref, item?: {name, grademax, gradepass, category,
+     * hidden}, grades?: [{userid, grade|null, feedback?}], override_teacher? }
+     *
+     * Only items with the idnumber alphabees:<ref> are touched (grade_writer).
+     * 200 when the item was written and at least one grade (or none were sent),
+     * 422 when every grade was refused — each entry says why.
+     *
+     * @param array $params
+     * @return array
+     */
+    private static function action_set_grades(array $params): array {
+        global $DB;
+        $courseid = (int)(self::param_any($params, param_schema::COURSE_ALIASES) ?? 0);
+        $ref = (string)(self::param_any($params, ['ref', 'item_ref', 'itemRef']) ?? '');
+        if ($courseid <= 0 || $ref === '') {
+            return self::deny(400, ['error' => 'missing_courseid_or_ref']);
+        }
+        if ($courseid == SITEID || !$DB->record_exists('course', ['id' => $courseid])) {
+            return self::deny(404, ['error' => 'course_not_found']);
+        }
+        $definition = self::param($params, 'item', 'item');
+        $definition = is_array($definition) ? $definition : [];
+        $grades = self::param($params, 'grades', 'grades');
+        $grades = is_array($grades) ? array_values($grades) : [];
+        $override = self::truthy(self::param_any($params, ['override_teacher', 'overrideTeacher']) ?? false);
+
+        $actor = self::actor_user();
+        if (!$actor) {
+            return self::deny(403, ['error' => 'no_actor_user']);
+        }
+        try {
+            [$item, $results] = self::run_as($actor, function () use ($courseid, $ref, $definition, $grades, $actor, $override) {
+                $item = grade_writer::ensure_item($courseid, $ref, $definition);
+                return [$item, grade_writer::write($item, $grades, (int)$actor->id, $override)];
+            });
+        } catch (\invalid_parameter_exception $e) {
+            return self::deny(400, ['error' => 'invalid_item', 'detail' => self::exception_detail($e)]);
+        } catch (\Throwable $e) {
+            debugging('[block_alphabees] set_grades failed: ' . $e->getMessage(), DEBUG_DEVELOPER);
+            return self::deny(500, ['error' => 'internal', 'detail' => self::exception_detail($e)]);
+        }
+
+        $written = count(array_filter($results, static function (array $r): bool {
+            return $r['ok'];
+        }));
+        $body = [
+            'item' => grade_writer::describe($item),
+            'results' => $results,
+            'summary' => ['total' => count($results), 'ok' => $written, 'failed' => count($results) - $written],
+        ];
+        if ($results && !$written) {
+            return self::deny(422, ['error' => 'no_grade_written'] + $body);
+        }
+        return self::ok($body);
+    }
+
+    /**
+     * The Alphabees grade items of a course.
+     *
+     * @param array $params courseid.
+     * @return array
+     */
+    private static function action_list_grade_items(array $params): array {
+        global $DB;
+        $courseid = (int)(self::param_any($params, param_schema::COURSE_ALIASES) ?? 0);
+        if ($courseid <= 0) {
+            return self::deny(400, ['error' => 'missing_courseid']);
+        }
+        if (!$DB->record_exists('course', ['id' => $courseid])) {
+            return self::deny(404, ['error' => 'course_not_found']);
+        }
+        return self::ok([
+            'courseid' => $courseid,
+            'items' => array_map([grade_writer::class, 'describe'], grade_writer::items($courseid)),
+        ]);
+    }
+
+    /**
+     * Remove an Alphabees grade item and the grades in it.
+     *
+     * @param array $params courseid, ref.
+     * @return array
+     */
+    private static function action_delete_grade_item(array $params): array {
+        $courseid = (int)(self::param_any($params, param_schema::COURSE_ALIASES) ?? 0);
+        $ref = (string)(self::param_any($params, ['ref', 'item_ref', 'itemRef']) ?? '');
+        if ($courseid <= 0 || $ref === '') {
+            return self::deny(400, ['error' => 'missing_courseid_or_ref']);
+        }
+        $item = grade_writer::find_item($courseid, $ref);
+        if (!$item) {
+            return self::deny(404, ['error' => 'grade_item_not_found']);
+        }
+        $actor = self::actor_user();
+        if (!$actor) {
+            return self::deny(403, ['error' => 'no_actor_user']);
+        }
+        self::run_as($actor, function () use ($item) {
+            $item->delete(grade_writer::SOURCE);
+        });
+        return self::ok(['courseid' => $courseid, 'ref' => $ref, 'deleted' => true]);
     }
 
     /**
@@ -1614,6 +1789,49 @@ class inbound_dispatcher {
             return self::deny(404, ['error' => 'course_not_found']);
         }
         return self::ok(['courseid' => $courseid, 'userid' => $userid] + user_access::blocked($course, $userid));
+    }
+
+    /**
+     * The readable text of the activity a learner has open (see activity_text).
+     *
+     * Read as that learner, so their access rules and filters apply. A
+     * refusal is an answer, not a transport error: 200 with ok = false and
+     * one of the fixed codes, never an empty text. Only missing parameters
+     * (400), an unknown module or user (404) and an exception (500,
+     * retryable) use an error status.
+     *
+     * @param array $params cmid, userid, optionally pageid, chapterid, max_chars.
+     * @return array
+     */
+    private static function action_get_activity_text(array $params): array {
+        $cmid = (int)(self::param_any($params, ['cmid', 'cmId', 'cm_id']) ?? 0);
+        $userid = (int)(self::param_any($params, param_schema::USER_ALIASES) ?? 0);
+        if ($cmid <= 0) {
+            return self::deny(400, ['error' => 'missing_cmid']);
+        }
+        if ($userid <= 0) {
+            return self::deny(400, ['error' => 'missing_userid']);
+        }
+        $user = \core_user::get_user($userid, '*', IGNORE_MISSING);
+        if (!$user || $user->deleted) {
+            return self::deny(404, ['error' => 'user_not_found']);
+        }
+        $pageid = (int)(self::param_any($params, ['pageid', 'pageId', 'page_id']) ?? 0);
+        $chapterid = (int)(self::param_any($params, ['chapterid', 'chapterId', 'chapter_id']) ?? 0);
+        $maxchars = (int)(self::param_any($params, ['max_chars', 'maxChars', 'maxchars']) ?? 0);
+
+        try {
+            $result = self::run_as($user, function () use ($cmid, $userid, $pageid, $chapterid, $maxchars) {
+                return activity_text::read($cmid, $userid, $pageid, $chapterid, $maxchars);
+            });
+        } catch (\Throwable $e) {
+            debugging('[block_alphabees] get_activity_text failed: ' . $e->getMessage(), DEBUG_DEVELOPER);
+            return self::deny(500, ['error' => 'internal', 'cmid' => $cmid, 'retryable' => true]);
+        }
+        if (!isset($result['error'])) {
+            return self::ok($result);
+        }
+        return self::deny($result['error'] === 'module_not_found' ? 404 : 200, $result);
     }
 
     /**

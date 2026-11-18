@@ -53,6 +53,7 @@ class provider implements \core_privacy\local\metadata\provider {
                 'completion' => 'privacy:metadata:alphabees_backend:completion',
                 'grades' => 'privacy:metadata:alphabees_backend:grades',
                 'message' => 'privacy:metadata:alphabees_backend:message',
+                'openactivity' => 'privacy:metadata:alphabees_backend:openactivity',
                 'firstname' => 'privacy:metadata:alphabees_backend:firstname',
                 'sessionend' => 'privacy:metadata:alphabees_backend:sessionend',
                 'access' => 'privacy:metadata:alphabees_backend:access',

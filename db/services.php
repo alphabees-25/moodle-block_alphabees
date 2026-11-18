@@ -138,6 +138,18 @@ $functions = [
         'ajax' => true,
         'loginrequired' => true,
     ],
+
+    // A new start token for the widget, always for the calling person. Browser
+    // session and Moodle app only; not in the Alphabees service below.
+    'block_alphabees_get_start_token' => [
+        'classname' => 'block_alphabees\\external\\get_start_token',
+        'methodname' => 'execute',
+        'description' => 'Issues a short-lived signed start token for the chat widget, for the calling user.',
+        'type' => 'read',
+        'ajax' => true,
+        'loginrequired' => true,
+        'services' => [MOODLE_OFFICIAL_MOBILE_SERVICE],
+    ],
 ];
 
 $services = [

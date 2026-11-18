@@ -205,7 +205,7 @@ class completion_progress_reader {
         $selected = 0;
         foreach ($records as $record) {
             $courses[(int)$record->courseid] = true;
-            $config = (array)unserialize(base64_decode((string)$record->configdata), ['allowed_classes' => ['stdClass']]);
+            $config = (array)placement_repository::decode_config((string)$record->configdata);
             if (($config['activitiesincluded'] ?? '') === 'selectedactivities') {
                 $selected++;
             }

@@ -23,11 +23,101 @@
 
 define([
     'block_alphabees/config',
-    'al-chat-widget'
-], function (config, externalIgnore) {
+    'al-chat-widget',
+    'core/ajax'
+], function (config, externalIgnore, Ajax) {
     "use strict";
 
     const _loadAlChat = window._loadAlChat;
+
+    /**
+     * Start tokens for the widget: the one the page rendered, and fresh ones
+     * from block_alphabees_get_start_token when it runs out or is asked for.
+     *
+     * Contract with the widget, all on this window:
+     * - window.alphabeesMoodle.getStartToken() resolves to a new token ('' if
+     *   none can be issued);
+     * - a message {type: "alRequestStartToken", requestId} is answered with
+     *   {type: "alStartToken", data: {startToken, expiresAt, requestId}};
+     * - the same message, without requestId, announces a token renewed ahead
+     *   of expiry while the page is visible.
+     */
+    const startTokens = (function () {
+        const RENEW_BEFORE_S = 90;
+        let scope = null;
+        let expiresAt = 0;
+        let payloadRef = null;
+
+        const announce = function (token, requestId) {
+            const data = {startToken: token, expiresAt: expiresAt};
+            if (requestId !== undefined) {
+                data.requestId = requestId;
+            }
+            window.postMessage({type: "alStartToken", data: data}, "/");
+        };
+        const fetchToken = function () {
+            if (!scope) {
+                return Promise.resolve("");
+            }
+            return Promise.resolve(Ajax.call([{
+                methodname: "block_alphabees_get_start_token",
+                args: scope
+            }])[0]).then(function (result) {
+                const token = result && result.token ? String(result.token) : "";
+                expiresAt = token ? Number(result.expiresat) || 0 : 0;
+                if (payloadRef) {
+                    payloadRef.startToken = token;
+                }
+                return token;
+            });
+        };
+        const renewIfDue = function () {
+            if (!expiresAt || document.hidden) {
+                return;
+            }
+            if (expiresAt - Math.floor(Date.now() / 1000) > RENEW_BEFORE_S) {
+                return;
+            }
+            fetchToken().then(function (token) {
+                announce(token);
+            }).catch(function () {
+                expiresAt = 0;
+            });
+        };
+
+        window.addEventListener("message", function (event) {
+            if (event.source !== window || !event.data || event.data.type !== "alRequestStartToken") {
+                return;
+            }
+            const requestId = event.data.requestId;
+            fetchToken().then(function (token) {
+                announce(token, requestId);
+            }).catch(function () {
+                announce("", requestId);
+            });
+        });
+        window.setInterval(renewIfDue, 60000);
+        document.addEventListener("visibilitychange", renewIfDue);
+
+        window.alphabeesMoodle = Object.assign(window.alphabeesMoodle || {}, {
+            getStartToken: fetchToken
+        });
+
+        return {
+            /**
+             * Remember the page's scope and token so renewals land in the payload.
+             *
+             * @param {Object} payload The widget payload; startToken is kept current in it.
+             * @param {number} expiry Unix expiry of the rendered token, 0 if none.
+             * @param {{courseid:number, cmid:number, placementuuid:string}} pagescope Page the token names.
+             */
+            track: function (payload, expiry, pagescope) {
+                payloadRef = payload;
+                expiresAt = expiry;
+                scope = expiry ? pagescope : null;
+            }
+        };
+    })();
 
     return {
         /**
@@ -36,9 +126,19 @@ define([
          * @param {string} apiKey API key for Alphabees.
          * @param {string} botId Bot identifier.
          * @param {string} primaryColor Primary color hex (e.g., "#72AECF").
-         * @param {{courseid:number, sectionnum:number, sectionid:number, userid:number}} ctx Context data.
+         * @param {string|Object} ctx Id of the element whose data-context holds the
+         *     context as JSON (since 3.4.0), or the context object itself.
          */
         init: function (apiKey, botId, primaryColor, ctx) {
+            if (typeof ctx === "string") {
+                const holder = document.getElementById(ctx);
+                try {
+                    ctx = holder ? JSON.parse(holder.getAttribute("data-context") || "{}") : {};
+                } catch (e) {
+                    window.console && console.error("[alphabees] Unreadable widget context.", e);
+                    ctx = {};
+                }
+            }
             if (typeof _loadAlChat !== "function") {
                 window.console && console.error("[alphabees] _loadAlChat is not defined.");
                 return;
@@ -84,7 +184,12 @@ define([
                     cmid: Number((ctx && ctx.cmid) || 0) || 0,
                     modType: (ctx && ctx.modtype) ? String(ctx.modtype) : "",
                     activityId: Number((ctx && ctx.activityid) || 0) || 0,
-                    activityName: (ctx && ctx.activityname) ? String(ctx.activityname) : ""
+                    activityName: (ctx && ctx.activityname) ? String(ctx.activityname) : "",
+                    // What the block knows about the open activity: open,
+                    // none or unknown (with a reason). See local\page_context.
+                    contextVersion: Number((ctx && ctx.contextversion) || 0) || 0,
+                    activityState: (ctx && ctx.activitystate) ? String(ctx.activitystate) : "",
+                    activityReason: (ctx && ctx.activityreason) ? String(ctx.activityreason) : ""
                 };
                 const placementUuid = (ctx && ctx.placementuuid) ? String(ctx.placementuuid) : "";
                 const siteIdentifier = (ctx && ctx.siteidentifier) ? String(ctx.siteidentifier) : "";
@@ -121,6 +226,18 @@ define([
                     payload.deepLink = String(ctx.deeplink);
                 }
 
+                // Signed by Moodle: who is on this page. The backend trusts it
+                // instead of userId. Valid ten minutes and once, so a widget
+                // that connects later asks for a fresh one (see below).
+                if (ctx && ctx.starttoken) {
+                    payload.startToken = String(ctx.starttoken);
+                }
+                startTokens.track(payload, Number((ctx && ctx.starttokenexpiresat) || 0) || 0, {
+                    courseid: context.courseId,
+                    cmid: context.cmid,
+                    placementuuid: placementUuid
+                });
+
                 window.console && console.log("[alphabees] Initializing chat widget…", { userId, context, placementUuid, siteIdentifier });
 
                 window.__alphabeesMoodleLastPayload = payload;
@@ -141,9 +258,37 @@ define([
                 } catch (e) {
                     previousCourseId = null;
                 }
-                if (previousCourseId !== null && previousCourseId !== context.courseId) {
+                const courseChanged = previousCourseId !== null && previousCourseId !== context.courseId;
+                if (courseChanged) {
                     emitMoodleContextEvent(payload, "course_changed", previousCourseId);
                 }
+
+                // The widget bundle loads after the calls above, so nothing
+                // was listening to them. It announces itself with alChatReady;
+                // the latest state goes out again then (and after a reload of
+                // the widget), followed by the course change if there was one.
+                if (!window.__alphabeesMoodleReadyListener) {
+                    window.__alphabeesMoodleReadyListener = true;
+                    window.addEventListener("message", function (event) {
+                        if (event.source !== window || !event.data || event.data.type !== "alChatReady") {
+                            return;
+                        }
+                        const latest = window.__alphabeesMoodleLastPayload;
+                        if (!latest) {
+                            return;
+                        }
+                        window.postMessage({ type: "alUpdateState", data: latest }, "*");
+                        emitMoodleContextEvent(latest, "ready");
+                        const pending = window.__alphabeesMoodlePendingCourseChange;
+                        if (pending) {
+                            window.__alphabeesMoodlePendingCourseChange = null;
+                            emitMoodleContextEvent(latest, "course_changed", pending.previousCourseId);
+                        }
+                    });
+                }
+                window.__alphabeesMoodlePendingCourseChange = courseChanged
+                    ? { previousCourseId: previousCourseId }
+                    : null;
 
                 if (!window.__alphabeesMoodleContextWatcher) {
                     window.__alphabeesMoodleContextWatcher = true;

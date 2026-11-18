@@ -4,7 +4,7 @@
 
 The **Alphabees Moodle Plugin** adds the Alphabees AI tutor chat widget to Moodle as a block. It lets Moodle administrators place AI tutors in courses and pages while managing tutor configuration, knowledge sources, styling, and portal-managed placements through the Alphabees portal.
 
-- Current stable release: **3.2.0**
+- Current stable release: **3.4.0**
 - Supported Moodle versions: **4.2 through 5.3 LTS**
 - Portal: [portal.alphalearn.ai](https://portal.alphalearn.ai)
 - Moodle Plugin Directory: [moodle.org/plugins/block_alphabees](https://moodle.org/plugins/block_alphabees)

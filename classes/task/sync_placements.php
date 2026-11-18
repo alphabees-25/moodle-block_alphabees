@@ -65,14 +65,27 @@ class sync_placements extends \core\task\scheduled_task {
             return;
         }
 
+        // Copied blocks share their original's UUID until told apart.
+        $split = placement_repository::repair_uuids();
+        if ($split) {
+            mtrace('[block_alphabees] sync_placements: gave ' . $split . ' placement(s) a UUID of their own.');
+        }
+
         $instances = placement_repository::all_instances();
         $placements = [];
         foreach ($instances as $instance) {
             $placements[] = placement_repository::build_payload($instance);
         }
 
+        // Version and features ride along so the backend notices a plugin
+        // upgrade within the hour; a connection does not re-register on its
+        // own, and the start-token requirement is decided by these.
+        $version = \block_alphabees\local\plugin_features::version();
         $payload = [
             'site_identifier' => site_registry::site_identifier(),
+            'plugin_version' => $version['release'],
+            'plugin_version_code' => $version['version'],
+            'capabilities' => \block_alphabees\local\plugin_features::list(),
             'placements' => $placements,
             'placement_count' => count($placements),
             'snapshot_at' => gmdate('Y-m-d\TH:i:s\Z'),

@@ -28,7 +28,7 @@ defined('MOODLE_INTERNAL') || die();
 $plugin->component = 'block_alphabees';
 
 // The plugin version in YYYYMMDDXX format.
-$plugin->version = 2026102700;
+$plugin->version = 2026111800;
 
 // Minimum Moodle version required for this plugin.
 $plugin->requires = 2023042400;
@@ -42,4 +42,4 @@ $plugin->supported = [402, 503];
 $plugin->maturity = MATURITY_STABLE;
 
 // Human-readable plugin release sent to the Alphabees backend.
-$plugin->release = '3.2.0';
+$plugin->release = '3.4.0';

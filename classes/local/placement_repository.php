@@ -46,6 +46,79 @@ class placement_repository {
     }
 
     /**
+     * Make sure this instance has a placement_uuid of its own.
+     *
+     * Moodle copies configdata verbatim — course copy and restore, a dashboard
+     * reset — so a UUID alone cannot tell the original from a copy, and the
+     * backend would see two blocks as one placement. `placement_instanceid`
+     * records which instance the UUID was issued for; a different one means
+     * this is a copy, and it gets a fresh UUID.
+     *
+     * @param \stdClass $instance Row from {block_instances}.
+     * @param \stdClass $config Its decoded config; updated in place.
+     * @return bool True when the config was changed and written.
+     */
+    public static function claim_uuid(\stdClass $instance, \stdClass $config): bool {
+        global $DB;
+
+        $id = (int)$instance->id;
+        $boundto = isset($config->placement_instanceid) ? (int)$config->placement_instanceid : 0;
+        if (!empty($config->placement_uuid) && $boundto === $id) {
+            return false;
+        }
+        if (empty($config->placement_uuid) || ($boundto !== 0 && $boundto !== $id)) {
+            if (!empty($config->placement_uuid)) {
+                // A copy: remember where it came from, so the backend can give
+                // the new placement the original's portal settings.
+                $config->placement_copied_from = (string)$config->placement_uuid;
+            }
+            $config->placement_uuid = crypto::uuid_v4();
+        }
+        $config->placement_instanceid = $id;
+        $DB->set_field('block_instances', 'configdata', self::encode_config($config), ['id' => $id]);
+        return true;
+    }
+
+    /**
+     * Bind every instance to its UUID and split UUIDs that copies share.
+     *
+     * Copies made before 3.3.0 carry no instance id to tell them apart, so
+     * among those the lowest instance id — the oldest block — keeps the UUID.
+     *
+     * @return int Instances that got a new UUID; binding alone is not counted.
+     */
+    public static function repair_uuids(): int {
+        $instances = self::all_instances();
+        ksort($instances);
+        $configs = [];
+        $taken = [];
+        foreach ($instances as $id => $instance) {
+            $configs[$id] = self::decode_config($instance->configdata ?? '');
+            if (!empty($configs[$id]->placement_uuid) && (int)($configs[$id]->placement_instanceid ?? 0) === (int)$id) {
+                $taken[(string)$configs[$id]->placement_uuid] = true;
+            }
+        }
+
+        $renewed = 0;
+        foreach ($instances as $id => $instance) {
+            $config = $configs[$id];
+            $uuid = (string)($config->placement_uuid ?? '');
+            if ($uuid !== '' && (int)($config->placement_instanceid ?? 0) !== (int)$id) {
+                if (isset($taken[$uuid])) {
+                    $config->placement_copied_from = $uuid;
+                    unset($config->placement_uuid);
+                }
+            }
+            self::claim_uuid($instance, $config);
+            if ((string)$config->placement_uuid !== $uuid) {
+                $renewed++;
+            }
+            $taken[(string)$config->placement_uuid] = true;
+        }
+        return $renewed;
+    }
+
+    /**
      * Build a payload describing one block instance for the backend.
      *
      * Pulls course / context metadata so the portal can render a useful list.
@@ -126,6 +199,10 @@ class placement_repository {
         return [
             'placement_uuid' => isset($config->placement_uuid) ? (string)$config->placement_uuid : null,
             'instance_id' => (int)$instance->id,
+            // Set on a copy that got a UUID of its own: the UUID it carried
+            // before. Kept in the config, so a failed sync does not lose it.
+            'copied_from_placement_uuid' => !empty($config->placement_copied_from)
+                ? (string)$config->placement_copied_from : null,
             'course_id' => $courseid,
             'course_shortname' => $courseshortname,
             'course_fullname' => $coursefullname,
@@ -190,8 +267,15 @@ class placement_repository {
         if ($decoded === false) {
             return new \stdClass();
         }
-        $unserialized = @unserialize($decoded);
-        return ($unserialized instanceof \stdClass) ? $unserialized : new \stdClass();
+        // Block config is always a serialized stdClass. Never let it name a
+        // class: unserialize_object() builds stdClass only, so stored data
+        // cannot instantiate anything (PHP object injection).
+        if (!str_starts_with($decoded, 'O:')) {
+            return new \stdClass();
+        }
+        $config = @unserialize_object($decoded);
+        // A string that does not unserialize comes back as {0: false}.
+        return ((array)$config === [0 => false]) ? new \stdClass() : $config;
     }
 
     /**

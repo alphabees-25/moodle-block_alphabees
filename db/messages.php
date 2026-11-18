@@ -17,7 +17,7 @@
 /**
  * Message providers for block_alphabees.
  *
- * Five providers rather than one, because they carry different urgency and
+ * Six providers rather than one, because they carry different urgency and
  * address two different audiences. A recipient can keep the urgent ones on the
  * phone while reading the summary by mail.
  *
@@ -72,6 +72,15 @@ $messageproviders = [
 
     // Addressed to a learner: a human answered the question you asked the tutor.
     'tutor_reply' => [
+        'defaults' => [
+            'popup' => MESSAGE_PERMITTED + MESSAGE_DEFAULT_ENABLED,
+            'email' => MESSAGE_PERMITTED + MESSAGE_DEFAULT_ENABLED,
+        ],
+    ],
+
+    // Grades the tutor proposed or entered are waiting for your review, and
+    // reminders about ones still open. Only for people who may see grades.
+    'grade_review' => [
         'defaults' => [
             'popup' => MESSAGE_PERMITTED + MESSAGE_DEFAULT_ENABLED,
             'email' => MESSAGE_PERMITTED + MESSAGE_DEFAULT_ENABLED,

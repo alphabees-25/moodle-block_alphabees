@@ -54,6 +54,7 @@ class notifier {
         'learner_question' => self::AUDIENCE_STAFF,
         'escalation' => self::AUDIENCE_STAFF,
         'digest' => self::AUDIENCE_STAFF,
+        'grade_review' => self::AUDIENCE_STAFF,
         'exercise_assigned' => self::AUDIENCE_LEARNER,
         'tutor_reply' => self::AUDIENCE_LEARNER,
     ];
@@ -63,9 +64,25 @@ class notifier {
         'learner_question',
         'escalation',
         'digest',
+        'grade_review',
         'exercise_assigned',
         'tutor_reply',
     ];
+
+    /**
+     * Capabilities a recipient needs on top of the audience's own, per provider.
+     *
+     * A grade review names a learner and a grade, so it goes only to people
+     * who may see every learner's grades in that course.
+     *
+     * @var array<string, string>
+     */
+    private const PROVIDER_EXTRA_CAPABILITY = [
+        'grade_review' => 'moodle/grade:viewall',
+    ];
+
+    /** Where a grade_review notification may lead: the console or Moodle's gradebook. */
+    private const REVIEW_TARGETS = ['console', 'gradebook'];
 
     /** Never page more than this many people for one event. */
     private const MAX_RECIPIENTS = 200;
@@ -126,7 +143,9 @@ class notifier {
             // A learner-addressed message additionally requires an active
             // enrolment: holding the capability through a system-level role is
             // not a reason to receive somebody's course exercise.
+            $extra = self::PROVIDER_EXTRA_CAPABILITY[$provider] ?? null;
             $eligible = has_capability($capability, $context, $userid)
+                && ($extra === null || has_capability($extra, $context, $userid))
                 && ($audience !== self::AUDIENCE_LEARNER || is_enrolled($context, $userid, '', true));
             if ($eligible) {
                 $recipients[] = $userid;
@@ -221,7 +240,7 @@ class notifier {
             return false;
         }
 
-        $url = self::resolve_contexturl($params, (int)$course->id, $audience);
+        $url = self::resolve_contexturl($params, (int)$course->id, $audience, $provider);
 
         $message = new \core\message\message();
         $message->component = 'block_alphabees';
@@ -236,9 +255,13 @@ class notifier {
         $message->notification = 1;
         $message->courseid = (int)$course->id;
         $message->contexturl = $url->out(false);
-        $message->contexturlname = $audience === self::AUDIENCE_LEARNER
-            ? get_string('notify_open_tutor', 'block_alphabees')
-            : get_string('console_open', 'block_alphabees');
+        if ($audience === self::AUDIENCE_LEARNER) {
+            $message->contexturlname = get_string('notify_open_tutor', 'block_alphabees');
+        } else if ($provider === 'grade_review') {
+            $message->contexturlname = get_string('notify_open_review', 'block_alphabees');
+        } else {
+            $message->contexturlname = get_string('console_open', 'block_alphabees');
+        }
 
         // Rides along to the mobile app and the notification popover so the
         // console can open the exact case without a second round trip.
@@ -247,7 +270,7 @@ class notifier {
             'audience' => $audience,
             'courseid' => (int)$course->id,
         ];
-        foreach (['conversationid', 'caseid', 'placementuuid', 'deeplink'] as $key) {
+        foreach (['conversationid', 'caseid', 'placementuuid', 'deeplink', 'reviewid'] as $key) {
             if (!empty($params[$key])) {
                 $customdata[$key] = clean_param((string)$params[$key], PARAM_TEXT);
             }
@@ -260,15 +283,24 @@ class notifier {
     /**
      * Where clicking the notification should land.
      *
-     * Only our own console page is ever used as a target — a URL supplied from
-     * outside would make the notification a redirect gadget.
+     * Only pages of this site are ever used as a target — a URL supplied from
+     * outside would make the notification a redirect gadget. A grade review
+     * leads to the console with `review=<id>` (the console bundle decides how
+     * to show it, or where to send the teacher), or with `target: gradebook`
+     * to Moodle's grader report, where grades the tutor already entered are.
      *
      * @param array $params
      * @param int $courseid
      * @param string $audience
+     * @param string $provider
      * @return \moodle_url
      */
-    private static function resolve_contexturl(array $params, int $courseid, string $audience): \moodle_url {
+    private static function resolve_contexturl(
+        array $params,
+        int $courseid,
+        string $audience,
+        string $provider = ''
+    ): \moodle_url {
         if ($audience === self::AUDIENCE_LEARNER) {
             // Learners have no console. Send them to the course page that hosts
             // the tutor, carrying a reference the widget resolves — the exercise
@@ -281,8 +313,18 @@ class notifier {
             return new \moodle_url('/course/view.php', $query);
         }
 
+        if ($provider === 'grade_review') {
+            $target = (string)($params['target'] ?? 'console');
+            if (!in_array($target, self::REVIEW_TARGETS, true)) {
+                $target = 'console';
+            }
+            if ($target === 'gradebook') {
+                return new \moodle_url('/grade/report/grader/index.php', ['id' => $courseid]);
+            }
+        }
+
         $query = ['course' => $courseid];
-        foreach (['conversationid' => 'conversation', 'caseid' => 'case'] as $param => $key) {
+        foreach (['conversationid' => 'conversation', 'caseid' => 'case', 'reviewid' => 'review'] as $param => $key) {
             if (!empty($params[$param])) {
                 $query[$key] = clean_param((string)$params[$param], PARAM_ALPHANUMEXT);
             }

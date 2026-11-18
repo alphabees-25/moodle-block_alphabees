@@ -26,6 +26,10 @@ Nothing is sent until an administrator enters an Alphabees API key.
 - The Moodle user ID, so a conversation is recognised across sessions.
 - The course, section and placement the tutor is used in, including the course
   name.
+- The activity the learner has open: its name and type, and — when the tutor is
+  asked about it — its text (a text page, a lesson's content pages, a book's
+  chapters), as far as the learner may open it themselves. Never quiz questions
+  or solutions.
 - The content of the messages exchanged with the tutor.
 - The learner's first name — only if the site has switched on personal address
   in the plugin settings (off by default). Never the last name, email address

@@ -163,7 +163,7 @@ define("block_alphabees/console", ["core/ajax"], function (Ajax) {
             }
 
             // Published before the bundle loads so it can call straight away.
-            window.alphabeesMoodle = {version: 1, call: moodleCall};
+            window.alphabeesMoodle = Object.assign(window.alphabeesMoodle || {}, {version: 1, call: moodleCall});
 
             loadBundle(bundleUrl).then(function () {
                 var loading = document.getElementById("alphabees-console-loading");

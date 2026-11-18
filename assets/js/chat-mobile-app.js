@@ -21,7 +21,7 @@
  * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
-(function () {
+(function (app) {
     var container = document.getElementById("al-chat-data");
     if (!container) {
         console.warn("[alphabees] container missing");
@@ -55,9 +55,52 @@
     var MOD_TYPE = container.getAttribute("data-modtype") || "";
     var ACTIVITY_ID = Number(container.getAttribute("data-activityid") || 0) || 0;
     var ACTIVITY_NAME = container.getAttribute("data-activityname") || "";
+    var ACTIVITY_STATE = container.getAttribute("data-activitystate") || "";
+    var ACTIVITY_REASON = container.getAttribute("data-activityreason") || "";
+    var CONTEXT_VERSION = Number(container.getAttribute("data-contextversion") || 0) || 0;
     var PLACEMENT_UUID = container.getAttribute("data-placementuuid") || "";
     var SITE_IDENTIFIER = container.getAttribute("data-siteidentifier") || "";
     var PRIMARY_COLOR = container.getAttribute("data-primarycolor") || "#72aecf";
+    // Signed by Moodle for this view (see local\start_token); empty for guests.
+    var START_TOKEN = container.getAttribute("data-starttoken") || "";
+
+    // Fresh tokens through the app's own web-service connection. Same
+    // contract as on the web: window.alphabeesMoodle.getStartToken(), and
+    // {type: "alRequestStartToken", requestId} answered with "alStartToken".
+    // The handler runs again on every in-app navigation, so the latest view's
+    // scope wins.
+    window.__alphabeesStartTokenScope = START_TOKEN
+        ? {courseid: COURSE_ID, cmid: CMID, placementuuid: PLACEMENT_UUID}
+        : null;
+    if (!window.__alphabeesStartTokenBridge) {
+        window.__alphabeesStartTokenBridge = true;
+        var sites = app ? (app.CoreSitesProvider || app.CoreSites) : null;
+        var fetchStartToken = function () {
+            var scope = window.__alphabeesStartTokenScope;
+            var site = sites && typeof sites.getCurrentSite === "function" ? sites.getCurrentSite() : null;
+            if (!scope || !site || typeof site.write !== "function") {
+                return Promise.resolve("");
+            }
+            return Promise.resolve(site.write("block_alphabees_get_start_token", scope)).then(function (result) {
+                return result && result.token ? String(result.token) : "";
+            });
+        };
+        window.addEventListener("message", function (event) {
+            if (event.source !== window || !event.data || event.data.type !== "alRequestStartToken") {
+                return;
+            }
+            var requestId = event.data.requestId;
+            var reply = function (token) {
+                window.postMessage({type: "alStartToken", data: {startToken: token, requestId: requestId}}, "/");
+            };
+            fetchStartToken().then(reply).catch(function () {
+                reply("");
+            });
+        });
+        window.alphabeesMoodle = Object.assign(window.alphabeesMoodle || {}, {
+            getStartToken: fetchStartToken
+        });
+    }
 
     function moodleContext() {
         return {
@@ -74,6 +117,9 @@
             modType: MOD_TYPE,
             activityId: ACTIVITY_ID,
             activityName: ACTIVITY_NAME,
+            contextVersion: CONTEXT_VERSION,
+            activityState: ACTIVITY_STATE,
+            activityReason: ACTIVITY_REASON,
         };
     }
 
@@ -134,6 +180,9 @@
                     placementUuid: PLACEMENT_UUID,
                     siteIdentifier: SITE_IDENTIFIER
                 };
+                if (START_TOKEN) {
+                    initialPayload.startToken = START_TOKEN;
+                }
                 // Top-level like userId — never inside 'context' (prompt assembly).
                 if (USER_FIRSTNAME) {
                     initialPayload.userProfile = { firstName: USER_FIRSTNAME };
@@ -168,6 +217,10 @@
             placementUuid: PLACEMENT_UUID,
             siteIdentifier: SITE_IDENTIFIER
         };
+        // A new view, a new token: alReset wiped the previous one.
+        if (START_TOKEN) {
+            updatePayload.startToken = START_TOKEN;
+        }
         // Unlike the web SPA watcher this update follows an alReset, which
         // wipes widget state — without the name here it would be lost after
         // the first in-app navigation.
@@ -188,8 +241,28 @@
             emitMoodleContextEvent(updatePayload, "course_changed", previousCourseId);
         }
         window.postMessage({ type: "alConnect" }, "*");
+
+        // On the first view the bundle may not be listening yet when the
+        // messages above go out. It announces itself with alChatReady; the
+        // latest state is sent again then. One listener for the window, which
+        // the app keeps across views.
+        window.__alphabeesAppLastPayload = updatePayload;
+        if (!window.__alphabeesAppReadyListener) {
+            window.__alphabeesAppReadyListener = true;
+            window.addEventListener("message", function (event) {
+                if (event.source !== window || !event.data || event.data.type !== "alChatReady") {
+                    return;
+                }
+                var latest = window.__alphabeesAppLastPayload;
+                if (!latest) {
+                    return;
+                }
+                window.postMessage({ type: "alUpdateState", data: latest }, "*");
+                emitMoodleContextEvent(latest, "ready");
+            });
+        }
     })
     .catch(function (e) {
         console.error("[alphabees] mount error:", e);
     });
-})();
+})(this);

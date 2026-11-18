@@ -435,6 +435,69 @@ class param_schema {
                 ],
                 'required' => ['course_id', 'section'],
             ],
+            'set_activity_completion' => [
+                'about' => 'Mark an activity complete or incomplete for a learner, as a completion override. '
+                    . 'Changes only a state that is still empty or that Alphabees set: one a teacher '
+                    . 'overrode is refused as teacher_modified, a result the learner reached as '
+                    . 'learner_result (409), unless override_teacher. Asking for the state the learner '
+                    . 'already has writes nothing (unchanged: true).',
+                'params' => [
+                    'cmid' => ['accepts' => ['cmid', 'cmId', 'cm_id'], 'type' => 'int'],
+                    'userid' => ['accepts' => ['userid', 'userId', 'user_id'], 'type' => 'int'],
+                    'completed' => [
+                        'accepts' => ['completed'],
+                        'type' => 'bool',
+                        'about' => 'Or state: "complete" | "incomplete".',
+                    ],
+                    'override_teacher' => ['accepts' => ['override_teacher', 'overrideTeacher'], 'type' => 'bool'],
+                ],
+                'required' => ['cmid', 'userid'],
+                'returns' => [
+                    'completionstate' => 'int, 0 incomplete, 1 complete, 2 passed, 3 failed, 4 failed (hidden)',
+                    'completed' => 'bool',
+                    'overrideby' => 'int, 0 when not overridden',
+                    'unchanged' => 'bool, true when nothing was written',
+                    'previousstate' => 'int, the state before the call',
+                ],
+            ],
+            'get_activity_text' => [
+                'about' => 'The readable text of one activity, as this learner may read it: a text page, a '
+                    . 'lesson\'s content pages (never question pages, nothing behind a question the learner '
+                    . 'has not answered), a book\'s visible chapters; for quiz, assignment, label, url and '
+                    . 'folder the description only. A refusal is 200 with ok = false and error: '
+                    . 'not_visible_for_user (no name, no type) | rendered_only (H5P, SCORM, LTI, file) | '
+                    . 'not_supported | assessment_running | empty. 404 module_not_found / user_not_found, '
+                    . '500 internal with retryable = true. Never an empty text.',
+                'params' => [
+                    'cmid' => ['accepts' => ['cmid', 'cmId', 'cm_id'], 'type' => 'int'],
+                    'userid' => ['accepts' => self::USER_ALIASES, 'type' => 'int'],
+                    'pageid' => [
+                        'accepts' => ['pageid', 'pageId', 'page_id'],
+                        'type' => 'int',
+                        'about' => 'Lesson page. Without it: all content pages the learner can have reached.',
+                    ],
+                    'chapterid' => [
+                        'accepts' => ['chapterid', 'chapterId', 'chapter_id'],
+                        'type' => 'int',
+                        'about' => 'Book chapter. Without it: all chapters the learner sees.',
+                    ],
+                    'max_chars' => [
+                        'accepts' => ['max_chars', 'maxChars', 'maxchars'],
+                        'type' => 'int',
+                        'about' => 'Default 12000, at most 60000.',
+                    ],
+                ],
+                'required' => ['cmid', 'userid'],
+                'returns' => [
+                    'cmid' => 'int',
+                    'modname' => 'string',
+                    'name' => 'string',
+                    'part' => '{kind: page | lesson | lesson_page | book | book_chapter | description, id?, title?, '
+                        . 'pages?, chapters?}',
+                    'content_text' => 'plain text, tables as Markdown tables',
+                    'truncated' => 'bool',
+                ],
+            ],
             'get_user_access' => [
                 'about' => 'Activities and sections the user cannot open in the course, as Moodle decides '
                     . 'for that user: hidden, restricted by any availability condition, or inside a '
@@ -450,6 +513,54 @@ class param_schema {
                     'blocked_cmids' => 'list of course module ids',
                     'blocked_sections' => 'list of {id: course_sections.id, section: section number}',
                 ],
+            ],
+            'set_grades' => [
+                'about' => 'Write learners\' results into an Alphabees grade item (idnumber alphabees:<ref>), '
+                    . 'created on first use. Never touches other grade items. A grade a teacher changed by '
+                    . 'hand is refused per learner as teacher_modified unless override_teacher; locked '
+                    . 'items and grades are refused as locked. 200 when something was written or no grades '
+                    . 'were sent, 422 when every grade was refused.',
+                'params' => [
+                    'courseid' => ['accepts' => self::COURSE_ALIASES, 'type' => 'int'],
+                    'ref' => [
+                        'accepts' => ['ref', 'item_ref', 'itemRef'],
+                        'type' => 'string',
+                        'about' => 'Backend name of the exercise: letters, digits, - and _, at most 200.',
+                    ],
+                    'item' => [
+                        'accepts' => ['item'],
+                        'type' => 'object',
+                        'about' => '{name (required to create), grademax (default 100), gradepass, category '
+                            . '(grade category name, found or created), hidden}. Absent keys stay as stored.',
+                    ],
+                    'grades' => [
+                        'accepts' => ['grades'],
+                        'type' => 'list',
+                        'about' => '[{userid, grade: number or null to clear, feedback: HTML}]. Learners must '
+                            . 'be actively enrolled.',
+                    ],
+                    'override_teacher' => ['accepts' => ['override_teacher', 'overrideTeacher'], 'type' => 'bool'],
+                ],
+                'required' => ['courseid', 'ref'],
+                'returns' => [
+                    'item' => '{id, ref, name, grademax, gradepass, hidden, locked, category, graded}',
+                    'results' => 'per grade {userid, ok, error?: missing_userid_or_grade | out_of_range | '
+                        . 'user_not_found | not_enrolled | locked | teacher_modified | not_written}',
+                    'summary' => '{total, ok, failed}',
+                ],
+            ],
+            'list_grade_items' => [
+                'about' => 'The Alphabees grade items of a course.',
+                'params' => ['courseid' => ['accepts' => self::COURSE_ALIASES, 'type' => 'int']],
+                'required' => ['courseid'],
+            ],
+            'delete_grade_item' => [
+                'about' => 'Remove an Alphabees grade item with all grades in it. 404 grade_item_not_found.',
+                'params' => [
+                    'courseid' => ['accepts' => self::COURSE_ALIASES, 'type' => 'int'],
+                    'ref' => ['accepts' => ['ref', 'item_ref', 'itemRef'], 'type' => 'string'],
+                ],
+                'required' => ['courseid', 'ref'],
             ],
             'upload_file' => [
                 'about' => 'Put one file into a draft area. Pass the returned itemid as files_itemid.',

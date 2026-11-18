@@ -22,7 +22,6 @@
  * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
-use block_alphabees\local\crypto;
 use block_alphabees\local\placement_repository;
 use block_alphabees\local\site_registry;
 
@@ -76,30 +75,20 @@ class block_alphabees extends block_base {
     }
 
     /**
-     * Ensures the in-memory + persisted instance config has a placement_uuid,
-     * writing directly to the DB so we don't recursively trigger events.
+     * Ensures the in-memory + persisted instance config has a placement_uuid
+     * of its own — a copied block arrives with its original's — writing
+     * directly to the DB so we don't recursively trigger events.
      */
     private function ensure_placement_uuid(): void {
-        global $DB;
-
         if (empty($this->instance) || empty($this->instance->id)) {
             return;
         }
         $config = is_object($this->config) ? $this->config : new stdClass();
-        if (!empty($config->placement_uuid)) {
+        if (!placement_repository::claim_uuid($this->instance, $config)) {
             return;
         }
-        $config->placement_uuid = crypto::uuid_v4();
-        $DB->set_field(
-            'block_instances',
-            'configdata',
-            placement_repository::encode_config($config),
-            ['id' => $this->instance->id]
-        );
         $this->config = $config;
-        if (is_object($this->instance)) {
-            $this->instance->configdata = placement_repository::encode_config($config);
-        }
+        $this->instance->configdata = placement_repository::encode_config($config);
     }
 
     /**
@@ -312,22 +301,12 @@ class block_alphabees extends block_base {
             $courseid = (int)$COURSE->id;
         }
 
-        // Determine section number and section id.
-        $sectionnum = 0;
-        $sectionid  = 0;
-        $cmid = 0;
-        $modtype = '';
-        $activityid = 0;
-        $activityname = '';
-        if (!empty($this->page->cm)) {
-            // On activity pages the course module carries both.
-            $cmid = (int)($this->page->cm->id ?? 0);
-            $modtype = clean_param((string)($this->page->cm->modname ?? ''), PARAM_ALPHANUMEXT);
-            $activityid = (int)($this->page->cm->instance ?? 0);
-            $activityname = clean_param((string)($this->page->cm->name ?? ''), PARAM_TEXT);
-            $sectionnum = (int)($this->page->cm->sectionnum ?? 0);
-            $sectionid  = (int)($this->page->cm->section ?? 0);
-        } else {
+        // The open activity, and how sure we are of it (local\page_context).
+        $activity = \block_alphabees\local\page_context::of_page($this->page);
+        $cmid = $activity['cmid'];
+        $sectionnum = $activity['sectionnum'];
+        $sectionid = $activity['sectionid'];
+        if (!$cmid) {
             // On course view pages, section number may be in the URL.
             $sectionnum = optional_param('section', 0, PARAM_INT);
             if ($sectionnum && $courseid) {
@@ -341,7 +320,9 @@ class block_alphabees extends block_base {
         $userid = (int)$USER->id;
         $pagecontext = $this->page->context ?? null;
         $pagetype = clean_param((string)($this->page->pagetype ?? ''), PARAM_TEXT);
-        $pageurl = !empty($this->page->url) ? (string)$this->page->url->out(false) : '';
+        // Not empty($this->page->url): moodle_page has no __isset(). Reading url
+        // on a page without set_url() raises a developer warning, hence the test.
+        $pageurl = $this->page->has_set_url() ? (string)$this->page->url->out(false) : '';
 
         // Make sure this placement has a stable UUID. Older instances created
         // before the upgrade won't have one yet — generate it lazily here so
@@ -377,9 +358,12 @@ class block_alphabees extends block_base {
             'pagetype'       => $pagetype,
             'pageurl'        => $pageurl,
             'cmid'           => $cmid,
-            'modtype'        => $modtype,
-            'activityid'     => $activityid,
-            'activityname'   => $activityname,
+            'modtype'        => $activity['modtype'],
+            'activityid'     => $activity['activityid'],
+            'activityname'   => $activity['activityname'],
+            'activitystate'  => $activity['activitystate'],
+            'activityreason' => $activity['activityreason'],
+            'contextversion' => $activity['contextversion'],
             'userid'         => $userid,
             'placementuuid'  => $placementuuid,
             'siteidentifier' => \block_alphabees\local\site_registry::site_identifier(),
@@ -392,6 +376,21 @@ class block_alphabees extends block_base {
             $extracontext['sessionhash'] = \block_alphabees\local\session_tracker::remember();
         }
 
+        // Signed proof of who is on this page, which the backend trusts in
+        // place of the browser's userid (see local\start_token). Absent for
+        // guests and on a site that cannot sign yet.
+        $starttoken = \block_alphabees\local\start_token::issue(
+            $userid,
+            $courseid,
+            $cmid,
+            $placementuuid,
+            $extracontext['sessionhash'] ?? ''
+        );
+        if ($starttoken !== null) {
+            $extracontext['starttoken'] = $starttoken['token'];
+            $extracontext['starttokenexpiresat'] = $starttoken['expiresat'];
+        }
+
         // Opt-in (site setting, default off): first name only — enough for
         // display and personal address in the widget. Deliberately not part
         // of the 'context' object, which feeds the agent's prompt assembly.
@@ -401,6 +400,17 @@ class block_alphabees extends block_base {
             ];
         }
 
+        // The context travels in a data attribute, not as an argument:
+        // js_call_amd() warns on every page with debugging on once its
+        // arguments pass 1024 characters, and the start token alone is
+        // half of that. The AMD module reads it back by element id.
+        $contextid = \html_writer::random_id('alphabees-context');
+        $this->content->text .= \html_writer::div('', '', [
+            'id' => $contextid,
+            'hidden' => 'hidden',
+            'data-context' => json_encode($extracontext, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        ]);
+
         // Use Moodle's AMD module to load the chat widget.
         $this->page->requires->js_call_amd(
             'block_alphabees/chat_widget',
@@ -409,7 +419,7 @@ class block_alphabees extends block_base {
                 htmlspecialchars($apikey, ENT_QUOTES, 'UTF-8'),
                 htmlspecialchars($botid, ENT_QUOTES, 'UTF-8'),
                 htmlspecialchars($primarycolor, ENT_QUOTES, 'UTF-8'),
-                $extracontext,
+                $contextid,
             ]
         );
 
